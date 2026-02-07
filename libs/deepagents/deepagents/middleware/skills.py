@@ -129,6 +129,7 @@ MAX_SKILL_FILE_SIZE = 10 * 1024 * 1024
 MAX_SKILL_NAME_LENGTH = 64
 MAX_SKILL_DESCRIPTION_LENGTH = 1024
 MAX_SKILL_COMPATIBILITY_LENGTH = 500
+<<<<<<< HEAD
 
 # V2: Resource type mapping for standard skill resource directories
 RESOURCE_TYPE_MAP: dict[str, Literal["script", "reference", "asset"]] = {
@@ -245,6 +246,8 @@ def _format_skill_annotations(skill: "SkillMetadata") -> str:
         annotations.append(f"Compatibility: {skill['compatibility']}")
     return "; ".join(annotations) if annotations else ""
 
+=======
+>>>>>>> b5c8a998 (fix(sdk): harden skills metadata parsing, improve spec compliance (#1189))
 
 
 class SkillMetadata(TypedDict):
@@ -445,12 +448,21 @@ def _parse_skill_metadata(
         description_str = description_str[:MAX_SKILL_DESCRIPTION_LENGTH]
 
     raw_tools = frontmatter_data.get("allowed-tools")
+<<<<<<< HEAD
     if isinstance(raw_tools, str):
         allowed_tools = [
             t.strip(",")  # Support commas for compatibility with skills created for Claude Code.
             for t in raw_tools.split()
             if t.strip(",")
         ]
+=======
+    if raw_tools:
+        if isinstance(raw_tools, list):
+            allowed_tools = [str(t).strip() for t in raw_tools if str(t).strip()]
+        else:
+            # Assume space-delimited string
+            allowed_tools = str(raw_tools).split()
+>>>>>>> b5c8a998 (fix(sdk): harden skills metadata parsing, improve spec compliance (#1189))
     else:
         if raw_tools is not None:
             logger.warning(
@@ -777,8 +789,11 @@ class SkillsMiddleware(AgentMiddleware):
                 Use a factory for StateBackend: `lambda rt: StateBackend(rt)`
             sources: List of skill source paths (e.g.,
                 `['/skills/user/', '/skills/project/']`).
+<<<<<<< HEAD
             max_loaded_skills: Maximum number of simultaneously loaded skills.
                 Defaults to 10.
+=======
+>>>>>>> b5c8a998 (fix(sdk): harden skills metadata parsing, improve spec compliance (#1189))
         """
         self._backend = backend
         self.sources = sources
@@ -850,6 +865,7 @@ class SkillsMiddleware(AgentMiddleware):
         loaded_set = set(loaded)
 
         for skill in skills:
+<<<<<<< HEAD
             name = skill["name"]
             annotations = _format_skill_annotations(skill)
             status = " [Loaded]" if name in loaded_set else ""
@@ -859,6 +875,13 @@ class SkillsMiddleware(AgentMiddleware):
 
             skill_lines = [desc_line]
 
+=======
+            annotations = _format_skill_annotations(skill)
+            desc_line = f"- **{skill['name']}**: {skill['description']}"
+            if annotations:
+                desc_line += f" ({annotations})"
+            lines.append(desc_line)
+>>>>>>> b5c8a998 (fix(sdk): harden skills metadata parsing, improve spec compliance (#1189))
             if skill["allowed_tools"]:
                 skill_lines.append(f"  -> Recommended tools: {', '.join(skill['allowed_tools'])}")
 
