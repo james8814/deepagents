@@ -8,6 +8,7 @@ These commands are registered with the CLI via main.py:
 
 import argparse
 import functools
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -32,19 +33,13 @@ def _validate_name(name: str) -> tuple[bool, str]:
 
     Requirements (https://agentskills.io/specification):
     - Max 64 characters
-    - Unicode lowercase alphanumeric and hyphens only
+    - Lowercase alphanumeric and hyphens only (a-z, 0-9, -)
     - Cannot start or end with hyphen
     - No consecutive hyphens
     - No path traversal sequences
 
-    Unicode lowercase alphanumeric means any character where
-    `c.isalpha() and c.islower()` or `c.isdigit()` returns `True`,
-    which covers accented Latin characters (e.g., `'cafe'`,
-    `'uber-tool'`) and other scripts.  This matches the SDK's
-    `_validate_skill_name` implementation.
-
     Args:
-        name: The name to validate.
+        name: The name to validate
 
     Returns:
         Tuple of (is_valid, error_message). If valid, error_message is empty.
@@ -57,28 +52,17 @@ def _validate_name(name: str) -> tuple[bool, str]:
     if len(name) > MAX_SKILL_NAME_LENGTH:
         return False, "cannot exceed 64 characters"
 
-    # Check for path traversal sequences (CLI-specific; the SDK validates
-    # against the directory name instead, but the CLI accepts user input
-    # directly so we need explicit path-safety checks)
+    # Check for path traversal sequences
     if ".." in name or "/" in name or "\\" in name:
         return False, "cannot contain path components"
 
-    # Structural hyphen checks
-    if name.startswith("-") or name.endswith("-") or "--" in name:
+    # Spec: lowercase alphanumeric and hyphens only
+    # Pattern ensures: no start/end hyphen, no consecutive hyphens
+    if not re.match(r"^[a-z0-9]+(-[a-z0-9]+)*$", name):
         return (
             False,
-            "must be lowercase alphanumeric with single hyphens only",
-        )
-
-    # Character-by-character check (matches SDK's _validate_skill_name)
-    for c in name:
-        if c == "-":
-            continue
-        if (c.isalpha() and c.islower()) or c.isdigit():
-            continue
-        return (
-            False,
-            "must be lowercase alphanumeric with single hyphens only",
+            "must be lowercase letters, numbers, and hyphens only "
+            + "(no uppercase, no underscores, cannot start/end with hyphen)",
         )
 
     return True, ""
@@ -206,9 +190,8 @@ def _list(agent: str, *, project: bool = False) -> None:
         )
         console.print("\n[bold]Project Skills:[/bold]\n", style=COLORS["primary"])
     else:
-        # Load skills from all directories (including built-in)
+        # Load skills from all directories
         skills = list_skills(
-            built_in_skills_dir=settings.get_built_in_skills_dir(),
             user_skills_dir=user_skills_dir,
             project_skills_dir=project_skills_dir,
             user_agent_skills_dir=user_agent_skills_dir,
@@ -225,8 +208,7 @@ def _list(agent: str, *, project: bool = False) -> None:
                 "  1. .agents/skills/                 project skills\n"
                 "  2. .deepagents/skills/             project skills (alias)\n"
                 "  3. ~/.agents/skills/               user skills\n"
-                "  4. ~/.deepagents/<agent>/skills/   user skills (alias)\n"
-                "  5. <package>/built_in_skills/      built-in skills[/dim]",
+                "  4. ~/.deepagents/<agent>/skills/   user skills (alias)[/dim]",
                 style=COLORS["dim"],
             )
             console.print(
@@ -241,7 +223,6 @@ def _list(agent: str, *, project: bool = False) -> None:
     # Group skills by source
     user_skills = [s for s in skills if s["source"] == "user"]
     project_skills_list = [s for s in skills if s["source"] == "project"]
-    built_in_skills_list = [s for s in skills if s["source"] == "built-in"]
 
     # Show user skills
     if user_skills and not project:
@@ -269,21 +250,6 @@ def _list(agent: str, *, project: bool = False) -> None:
             name = skill["name"]
             console.print(f"  {bullet} [bold]{name}[/bold]", style=COLORS["primary"])
             console.print(f"    {skill_path.parent}/", style=COLORS["dim"])
-            console.print()
-            console.print(f"    {skill['description']}", style=COLORS["dim"])
-            console.print()
-
-    # Show built-in skills
-    if built_in_skills_list and not project:
-        if user_skills or project_skills_list:
-            console.print()
-        console.print(
-            "[bold magenta]Built-in Skills:[/bold magenta]", style=COLORS["primary"]
-        )
-        bullet = get_glyphs().bullet
-        for skill in built_in_skills_list:
-            name = skill["name"]
-            console.print(f"  {bullet} [bold]{name}[/bold]", style=COLORS["primary"])
             console.print()
             console.print(f"    {skill['description']}", style=COLORS["dim"])
             console.print()
@@ -476,7 +442,6 @@ def _info(skill_name: str, *, agent: str = "agent", project: bool = False) -> No
         )
     else:
         skills = list_skills(
-            built_in_skills_dir=settings.get_built_in_skills_dir(),
             user_skills_dir=user_skills_dir,
             project_skills_dir=project_skills_dir,
             user_agent_skills_dir=user_agent_skills_dir,
@@ -498,12 +463,8 @@ def _info(skill_name: str, *, agent: str = "agent", project: bool = False) -> No
     skill_content = skill_path.read_text(encoding="utf-8")
 
     # Determine source label
-    source_labels = {
-        "project": ("Project Skill", "green"),
-        "user": ("User Skill", "cyan"),
-        "built-in": ("Built-in Skill", "magenta"),
-    }
-    source_label, source_color = source_labels.get(skill["source"], ("Skill", "dim"))
+    source_label = "Project Skill" if skill["source"] == "project" else "User Skill"
+    source_color = "green" if skill["source"] == "project" else "cyan"
 
     # Check if this project skill shadows a user skill with the same name.
     # This is a cosmetic hint — if the second list_skills() call fails

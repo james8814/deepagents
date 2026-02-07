@@ -45,6 +45,9 @@ from deepagents_cli.tools import fetch_url, web_search
 DEFAULT_AGENT_NAME = "agent"
 """The default agent name used when no `-a` flag is provided."""
 
+DEFAULT_AGENT_NAME = "agent"
+"""The default agent name used when no `-a` flag is provided."""
+
 
 def list_agents() -> None:
     """List all available agents."""

@@ -248,11 +248,6 @@ def show_help() -> None:
         f" v{__version__}{install_type}"
     )
     console.print()
-    console.print(
-        "Docs: [link=https://docs.langchain.com/oss/python/deepagents/cli]https://docs.langchain.com/oss/python/deepagents/cli[/link]",
-        style=COLORS["dim"],
-    )
-    console.print()
     console.print("[bold]Usage:[/bold]", style=COLORS["primary"])
     console.print(
         "  deepagents [OPTIONS]                           Start interactive thread"
@@ -279,7 +274,7 @@ def show_help() -> None:
     console.print("  -M, --model MODEL          Model to use (e.g., gpt-4o)")
     console.print("  -m, --message TEXT         Initial prompt to auto-submit on start")
     console.print(
-        "  --auto-approve             Auto-approve all tool calls (toggle: Shift+Tab)"
+        "  --auto-approve             Auto-approve tool usage without prompting"
     )
     console.print("  --sandbox TYPE             Remote sandbox for execution")
     console.print(
@@ -288,29 +283,8 @@ def show_help() -> None:
     console.print(
         "  --sandbox-setup PATH       Setup script to run in sandbox after creation"
     )
-    console.print("  -n, --non-interactive MSG  Run a single task and exit")
-    console.print(
-        "  --shell-allow-list CMDS    Comma-separated local shell commands to allow"
-    )
-    console.print("  --default-model [MODEL]    Set, show, or manage the default model")
-    console.print("  --clear-default-model      Clear the default model")
     console.print("  -v, --version              Show deepagents CLI version")
     console.print("  -h, --help                 Show this help message and exit")
-    console.print()
-
-    console.print("[bold]Non-Interactive Mode:[/bold]", style=COLORS["primary"])
-    console.print(
-        "  deepagents -n 'Summarize README.md'     # Run task (no local shell access)",
-        style=COLORS["dim"],
-    )
-    console.print(
-        "  deepagents -n 'List files' --shell-allow-list recommended  # Use safe commands",  # noqa: E501
-        style=COLORS["dim"],
-    )
-    console.print(
-        "  deepagents -n 'Search logs' --shell-allow-list ls,cat,grep # Specify list",
-        style=COLORS["dim"],
-    )
     console.print()
 
 
@@ -386,8 +360,7 @@ def show_skills_help() -> None:
         "  1. .agents/skills/                 project skills\n"
         "  2. .deepagents/skills/             project skills (alias)\n"
         "  3. ~/.agents/skills/               user skills\n"
-        "  4. ~/.deepagents/<agent>/skills/   user skills (alias)\n"
-        "  5. <package>/built_in_skills/      built-in skills[/dim]",
+        "  4. ~/.deepagents/<agent>/skills/   user skills (alias)[/dim]",
         style=COLORS["dim"],
     )
     console.print(
