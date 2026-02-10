@@ -1,4 +1,5 @@
 """Deep Agents come with planning, filesystem, and subagents."""
+# ruff: noqa: ERA001
 
 from collections.abc import Callable, Sequence
 from typing import Any
@@ -30,7 +31,7 @@ from deepagents.middleware.subagents import (
     SubAgent,
     SubAgentMiddleware,
 )
-from deepagents.middleware.summarization import SummarizationMiddleware, _compute_summarization_defaults
+from deepagents.middleware.summarization import _compute_summarization_defaults, _DeepAgentsSummarizationMiddleware
 
 BASE_AGENT_PROMPT = "In order to complete the objective that the user asks of you, you have access to a number of standard tools."
 
@@ -149,7 +150,23 @@ def create_deep_agent(
     if model is None:
         model = get_default_model()
     elif isinstance(model, str):
-        model = init_chat_model(model)
+        if model.startswith("openai:"):
+            # Use Responses API by default. To use chat completions, use
+            # `model=init_chat_model("openai:...")`
+            # To disable data retention with the Responses API, use
+            # ```
+            # model=init_chat_model(
+            #     "openai:...",
+            #     use_responses_api=True,
+            #     store=False,
+            #     include=["reasoning.encrypted_content"],
+            # )
+            # ```
+            model_init_params: dict = {"use_responses_api": True}
+        else:
+            model_init_params = {}
+
+        model = init_chat_model(model, **model_init_params)
 
     # Compute summarization defaults based on model profile
     summarization_defaults = _compute_summarization_defaults(model)
@@ -160,7 +177,7 @@ def create_deep_agent(
     gp_middleware: list[AgentMiddleware] = [
         TodoListMiddleware(),
         FilesystemMiddleware(backend=backend),
-        SummarizationMiddleware(
+        _DeepAgentsSummarizationMiddleware(
             model=model,
             backend=backend,
             trigger=summarization_defaults["trigger"],
@@ -201,7 +218,7 @@ def create_deep_agent(
             subagent_middleware: list[AgentMiddleware] = [
                 TodoListMiddleware(),
                 FilesystemMiddleware(backend=backend),
-                SummarizationMiddleware(
+                _DeepAgentsSummarizationMiddleware(
                     model=subagent_model,
                     backend=backend,
                     trigger=subagent_summarization_defaults["trigger"],
@@ -244,7 +261,7 @@ def create_deep_agent(
                 backend=backend,
                 subagents=all_subagents,
             ),
-            SummarizationMiddleware(
+            _DeepAgentsSummarizationMiddleware(
                 model=model,
                 backend=backend,
                 trigger=summarization_defaults["trigger"],
