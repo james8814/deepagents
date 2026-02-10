@@ -838,7 +838,12 @@ def create_model(model_name_override: str | None = None) -> BaseChatModel:
     if provider == "openai":
         from langchain_openai import ChatOpenAI
 
-        model = ChatOpenAI(model=model_name)  # type: ignore[call-arg]
+        # Support custom base URL for OpenAI-compatible APIs (e.g., DashScope)
+        openai_base_url = os.environ.get("OPENAI_BASE_URL")
+        model = ChatOpenAI(
+            model=model_name,
+            base_url=openai_base_url,
+        )  # type: ignore[call-arg]
     elif provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
 

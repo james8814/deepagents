@@ -4,10 +4,11 @@ This module creates a deep research agent with custom tools and prompts
 for conducting web research with strategic thinking and context management.
 """
 
+import os
 from datetime import datetime
 
 from langchain.chat_models import init_chat_model
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from deepagents import create_deep_agent
 
 from research_agent.prompts import (
@@ -15,7 +16,19 @@ from research_agent.prompts import (
     RESEARCH_WORKFLOW_INSTRUCTIONS,
     SUBAGENT_DELEGATION_INSTRUCTIONS,
 )
-from research_agent.tools import tavily_search, think_tool
+from research_agent.tools import web_search, think_tool
+from research_agent.crawler_tool import fetch_webpage
+
+# ============================================
+# 沙盒后端配置
+# ============================================
+# 使用 Daytona 云端沙盒（完全隔离的容器环境）
+from deepagents_cli.integrations.daytona import DaytonaProvider
+
+# 创建 Daytona 沙盒后端
+provider = DaytonaProvider()
+sandbox_backend = provider.get_or_create()
+print(f"[Sandbox] Created Daytona sandbox: {sandbox_backend.id}")
 
 # Limits
 max_concurrent_research_units = 3
@@ -41,19 +54,25 @@ research_sub_agent = {
     "name": "research-agent",
     "description": "Delegate research to the sub-agent researcher. Only give this researcher one topic at a time.",
     "system_prompt": RESEARCHER_INSTRUCTIONS.format(date=current_date),
-    "tools": [tavily_search, think_tool],
+    "tools": [web_search, think_tool, fetch_webpage],
 }
 
-# Model Gemini 3 
-# model = ChatGoogleGenerativeAI(model="gemini-3-pro-preview", temperature=0.0)
+# ============================================
+# 模型配置: 使用 Qwen (通义千问)
+# ============================================
+# 从环境变量读取 DashScope API Key
+model = ChatOpenAI(
+    model="qwen-max",  # 可选: qwen-max, qwen-plus, qwen-turbo
+    api_key=os.getenv("DASHSCOPE_API_KEY"),
+    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+    temperature=0.0,
+)
 
-# Model Claude 4.5
-model = init_chat_model(model="anthropic:claude-sonnet-4-5-20250929", temperature=0.0)
-
-# Create the agent
+# Create the agent with sandbox backend
 agent = create_deep_agent(
     model=model,
-    tools=[tavily_search, think_tool],
+    tools=[web_search, think_tool, fetch_webpage],
     system_prompt=INSTRUCTIONS,
     subagents=[research_sub_agent],
+    backend=sandbox_backend,  # 使用 Daytona 云端沙盒
 )

@@ -73,9 +73,18 @@ You can call these tools in series or in parallel, your research is conducted in
 </Task>
 
 <Available Research Tools>
-You have access to two specific research tools:
-1. **tavily_search**: For conducting web searches to gather information
-2. **think_tool**: For reflection and strategic planning during research
+You have access to the following research tools:
+
+1. **web_search**: For conducting web searches to gather information (uses DuckDuckGo)
+2. **fetch_webpage**: For fetching and extracting content from a specific URL
+3. **web_search_and_fetch**: Combined search + fetch for comprehensive research
+4. **think_tool**: For reflection and strategic planning during research
+
+**When to use each tool:**
+- Use **web_search** for general information gathering and discovering sources
+- Use **fetch_webpage** when you have a specific URL and need its full content
+- Use **web_search_and_fetch** when you need comprehensive research with full content from multiple sources
+
 **CRITICAL: Use think_tool after each search to reflect on results and plan next steps**
 </Available Research Tools>
 

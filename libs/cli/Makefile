@@ -34,7 +34,7 @@ benchmark:
 	uv run --group test pytest ./tests -m benchmark
 
 run:
-	uvx --no-cache --reinstall .
+	uv run --env-file .env deepagents
 
 
 ######################

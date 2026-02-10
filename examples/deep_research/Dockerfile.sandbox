@@ -1,0 +1,16 @@
+FROM ubuntu:24.04
+
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    curl \
+    wget \
+    git \
+    grep \
+    findutils \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# 保持容器运行
+CMD ["sleep", "infinity"]

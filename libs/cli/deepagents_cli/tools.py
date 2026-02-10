@@ -20,6 +20,39 @@ tavily_client = (
     TavilyClient(api_key=settings.tavily_api_key) if settings.has_tavily else None
 )
 
+# Try to import DuckDuckGo search (free fallback)
+try:
+    from duckduckgo_search import DDGS
+    DDGS_AVAILABLE = True
+except ImportError:
+    DDGS_AVAILABLE = False
+
+
+def _duckduckgo_search(query: str, max_results: int = 5) -> dict:
+    """Search using DuckDuckGo (free, no API key required).
+    
+    Args:
+        query: Search query
+        max_results: Maximum number of results
+        
+    Returns:
+        Dictionary with search results in Tavily-compatible format
+    """
+    if not DDGS_AVAILABLE:
+        raise ImportError("DuckDuckGo search not available. Install: pip install duckduckgo-search")
+    
+    results = []
+    with DDGS() as ddgs:
+        for result in ddgs.text(query, max_results=max_results):
+            results.append({
+                "title": result.get("title", ""),
+                "url": result.get("href", ""),
+                "content": result.get("body", ""),
+                "score": 0.9,  # DuckDuckGo doesn't provide scores
+            })
+    
+    return {"results": results, "query": query}
+
 
 def http_request(
     url: str,
@@ -94,10 +127,14 @@ def web_search(
     topic: Literal["general", "news", "finance"] = "general",
     include_raw_content: bool = False,
 ):
-    """Search the web using Tavily for current information and documentation.
+    """Search the web using Tavily or DuckDuckGo for current information and documentation.
 
     This tool searches the web and returns relevant results. After receiving results,
     you MUST synthesize the information into a natural, helpful response for the user.
+
+    Priority:
+    1. Tavily (if configured and has quota)
+    2. DuckDuckGo (free fallback, no API key required)
 
     Args:
         query: The search query (be specific and detailed)
@@ -121,33 +158,47 @@ def web_search(
     4. Cite sources by mentioning the page titles or URLs
     5. NEVER show the raw JSON to the user - always provide a formatted response
     """
-    if tavily_client is None:
-        return {
-            "error": "Tavily API key not configured. "
-            "Please set TAVILY_API_KEY environment variable.",
-            "query": query,
-        }
-
-    try:
-        return tavily_client.search(
-            query,
-            max_results=max_results,
-            include_raw_content=include_raw_content,
-            topic=topic,
-        )
-    except (
-        requests.exceptions.RequestException,
-        ValueError,
-        TypeError,
-        # Tavily-specific exceptions
-        BadRequestError,
-        ForbiddenError,
-        InvalidAPIKeyError,
-        MissingAPIKeyError,
-        TavilyTimeoutError,
-        UsageLimitExceededError,
-    ) as e:
-        return {"error": f"Web search error: {e!s}", "query": query}
+    # Try Tavily first if configured
+    if tavily_client is not None:
+        try:
+            return tavily_client.search(
+                query,
+                max_results=max_results,
+                include_raw_content=include_raw_content,
+                topic=topic,
+            )
+        except UsageLimitExceededError:
+            # Tavily quota exceeded, fall through to DuckDuckGo
+            pass
+        except (
+            requests.exceptions.RequestException,
+            ValueError,
+            TypeError,
+            # Tavily-specific exceptions
+            BadRequestError,
+            ForbiddenError,
+            InvalidAPIKeyError,
+            MissingAPIKeyError,
+            TavilyTimeoutError,
+        ):
+            # Tavily failed, try DuckDuckGo
+            pass
+    
+    # Fallback to DuckDuckGo (free)
+    if DDGS_AVAILABLE:
+        try:
+            return _duckduckgo_search(query, max_results=max_results)
+        except Exception as e:
+            return {
+                "error": f"Web search error: DuckDuckGo failed ({e!s}). Tavily not configured or quota exceeded.",
+                "query": query,
+            }
+    
+    # No search available
+    return {
+        "error": "Web search not available. Please install 'duckduckgo-search' or configure TAVILY_API_KEY.",
+        "query": query,
+    }
 
 
 def fetch_url(url: str, timeout: int = 30) -> dict[str, Any]:

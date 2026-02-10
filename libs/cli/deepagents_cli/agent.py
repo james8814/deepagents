@@ -40,6 +40,7 @@ from deepagents_cli.config import (
 from deepagents_cli.integrations.sandbox_factory import get_default_working_dir
 from deepagents_cli.local_context import LocalContextMiddleware
 from deepagents_cli.subagents import list_subagents
+from deepagents_cli.tools import fetch_url, web_search
 
 
 def list_agents() -> None:
@@ -449,7 +450,11 @@ def create_cli_agent(
                 for execution
             - `composite_backend`: `CompositeBackend` for file operations
     """
-    tools = tools or []
+    tools = list(tools) if tools else []
+
+    # Add web search tools if Tavily is configured
+    if settings.has_tavily:
+        tools.extend([web_search, fetch_url])
 
     # Setup agent directory for persistent memory (if enabled)
     if enable_memory or enable_skills:

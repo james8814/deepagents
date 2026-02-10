@@ -1,16 +1,28 @@
 """Research Tools.
 
-This module provides search and content processing utilities for the research agent,
-using Tavily for URL discovery and fetching full webpage content.
+This module provides search and content processing utilities for the research agent.
+支持 Tavily 和 DuckDuckGo (免费) 两种搜索方式。
 """
 
+import os
 import httpx
 from langchain_core.tools import InjectedToolArg, tool
 from markdownify import markdownify
-from tavily import TavilyClient
 from typing_extensions import Annotated, Literal
 
-tavily_client = TavilyClient()
+# 尝试导入 Tavily (可选)
+try:
+    from tavily import TavilyClient
+    TAVILY_AVAILABLE = True
+except ImportError:
+    TAVILY_AVAILABLE = False
+
+# 尝试导入 DuckDuckGo (免费)
+try:
+    from ddgs import DDGS
+    DUCKDUCKGO_AVAILABLE = True
+except ImportError:
+    DUCKDUCKGO_AVAILABLE = False
 
 
 def fetch_webpage_content(url: str, timeout: float = 10.0) -> str:
@@ -35,36 +47,100 @@ def fetch_webpage_content(url: str, timeout: float = 10.0) -> str:
         return f"Error fetching content from {url}: {str(e)}"
 
 
+def duckduckgo_search(query: str, max_results: int = 5) -> list:
+    """使用 DuckDuckGo 免费搜索 (无需 API Key).
+    
+    Args:
+        query: 搜索关键词
+        max_results: 最大结果数
+        
+    Returns:
+        搜索结果列表
+    """
+    if not DUCKDUCKGO_AVAILABLE:
+        raise ImportError("DuckDuckGo search not available. Install: pip install ddgs")
+    
+    results = []
+    with DDGS() as ddgs:
+        for result in ddgs.text(query, max_results=max_results):
+            results.append({
+                "title": result.get("title", ""),
+                "url": result.get("href", ""),
+                "content": result.get("body", ""),
+            })
+    return results
+
+
+def tavily_search_impl(query: str, max_results: int = 5, topic: str = "general") -> list:
+    """使用 Tavily 搜索 (需要 API Key).
+    
+    Args:
+        query: 搜索关键词
+        max_results: 最大结果数
+        topic: 主题过滤
+        
+    Returns:
+        搜索结果列表
+    """
+    if not TAVILY_AVAILABLE:
+        raise ImportError("Tavily not available. Install: pip install tavily-python")
+    
+    api_key = os.getenv("TAVILY_API_KEY")
+    if not api_key or api_key == "your_tavily_api_key_here":
+        raise ValueError("TAVILY_API_KEY not configured")
+    
+    client = TavilyClient(api_key=api_key)
+    search_results = client.search(query, max_results=max_results, topic=topic)
+    
+    results = []
+    for result in search_results.get("results", []):
+        results.append({
+            "title": result.get("title", ""),
+            "url": result.get("url", ""),
+            "content": result.get("content", ""),
+        })
+    return results
+
+
 @tool(parse_docstring=True)
-def tavily_search(
+def web_search(
     query: str,
-    max_results: Annotated[int, InjectedToolArg] = 1,
+    max_results: Annotated[int, InjectedToolArg] = 3,
     topic: Annotated[
         Literal["general", "news", "finance"], InjectedToolArg
     ] = "general",
 ) -> str:
     """Search the web for information on a given query.
 
-    Uses Tavily to discover relevant URLs, then fetches and returns full webpage content as markdown.
+    Uses DuckDuckGo (free, no API key required) or Tavily (if configured) to discover relevant URLs,
+    then fetches and returns full webpage content as markdown.
 
     Args:
         query: Search query to execute
-        max_results: Maximum number of results to return (default: 1)
+        max_results: Maximum number of results to return (default: 3)
         topic: Topic filter - 'general', 'news', or 'finance' (default: 'general')
 
     Returns:
         Formatted search results with full webpage content
     """
-    # Use Tavily to discover URLs
-    search_results = tavily_client.search(
-        query,
-        max_results=max_results,
-        topic=topic,
-    )
+    # 优先尝试 DuckDuckGo (免费，无需 API Key)
+    try:
+        search_results = duckduckgo_search(query, max_results=max_results)
+        search_engine = "DuckDuckGo"
+    except Exception as e:
+        # 如果 DuckDuckGo 失败，尝试 Tavily
+        try:
+            search_results = tavily_search_impl(query, max_results=max_results, topic=topic)
+            search_engine = "Tavily"
+        except Exception:
+            return f"❌ Search failed. DuckDuckGo error: {e}. Please check your internet connection or configure TAVILY_API_KEY."
+
+    if not search_results:
+        return f"🔍 No results found for '{query}'"
 
     # Fetch full content for each URL
     result_texts = []
-    for result in search_results.get("results", []):
+    for result in search_results:
         url = result["url"]
         title = result["title"]
 
@@ -81,11 +157,15 @@ def tavily_search(
         result_texts.append(result_text)
 
     # Format final response
-    response = f"""🔍 Found {len(result_texts)} result(s) for '{query}':
+    response = f"""🔍 Found {len(result_texts)} result(s) for '{query}' (via {search_engine}):
 
 {chr(10).join(result_texts)}"""
 
     return response
+
+
+# 为了兼容性，保留 tavily_search 别名
+tavily_search = web_search
 
 
 @tool(parse_docstring=True)
