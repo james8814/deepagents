@@ -1,281 +1,170 @@
 # Global development guidelines for the Deep Agents monorepo
 
-This document provides comprehensive context to understand the Deep Agents Python project and assist with development.
+This document provides context to understand the Deep Agents Python project and assist with development.
 
-## Project overview
+## Project architecture and context
 
-Deep Agents is a batteries-included agent harness for building AI agents with planning, filesystem access, shell execution, and sub-agent spawning capabilities. It is built on top of LangGraph and provides opinionated defaults while remaining fully customizable.
+### Monorepo structure
 
-### Key features
+This is a Python monorepo with multiple independently versioned packages that use `uv`.
 
-- **Planning** — `write_todos` / `read_todos` for task breakdown and progress tracking
-- **Filesystem** — `read_file`, `write_file`, `edit_file`, `ls`, `glob`, `grep` for reading and writing context
-- **Shell access** — `execute` for running commands (with sandboxing support)
-- **Sub-agents** — `task` for delegating work with isolated context windows
-- **Context management** — Auto-summarization when conversations get long, large outputs saved to files
-- **Provider agnostic** — Works with Claude, OpenAI, Google, or any LangChain-compatible model
-
-### Repository layout
-
-```
+```txt
 deepagents/
 ├── libs/
-│   ├── deepagents/      # Core SDK (published as `deepagents`)
-│   ├── cli/             # Terminal UI (published as `deepagents-cli`)
-│   ├── acp/             # Agent Context Protocol support (published as `deepagents-acp`)
-│   ├── harbor/          # Evaluation/benchmark framework (published as `deepagents-harbor`)
-│   └── partners/
-│       └── daytona/     # Daytona sandbox integration (published as `langchain-daytona`)
-├── examples/            # Working agent examples and patterns
-│   ├── deep_research/   # Multi-step web research agent
-│   ├── content-builder-agent/  # Content writing with memory and skills
-│   ├── text-to-sql-agent/      # Natural language to SQL
-│   ├── ralph_mode/      # Autonomous looping pattern
-│   └── downloading_agents/     # Agent distribution pattern
-├── .github/             # CI/CD workflows and templates
-└── README.md            # Information about Deep Agents
+│   ├── deepagents/  # SDK
+│   ├── cli/         # CLI tool
+│   ├── acp/         # Agent Context Protocol support
+│   └── harbor/      # Evaluation/benchmark framework
+│   └── partners/    # Integration packages
+│       └── daytona/
+│       └── ...
+├── .github/         # CI/CD workflows and templates
+└── README.md        # Information about Deep Agents
 ```
 
-## Monorepo structure
+### Development tools & commands
 
-This is a Python monorepo with multiple independently versioned packages using `uv` for dependency management.
+- `uv` – Fast Python package installer and resolver (replaces pip/poetry)
+- `make` – Task runner for common development commands. Feel free to look at the `Makefile` for available commands and usage patterns.
+- `ruff` – Fast Python linter and formatter
+- `ty` – Static type checking
 
-### Package dependencies
+#### Suppressing ruff lint rules
 
+Prefer inline `# noqa: RULE` over `[tool.ruff.lint.per-file-ignores]` for individual exceptions. `per-file-ignores` silences a rule for the *entire* file — If you add it for one violation, all future violations of that rule in the same file are silently ignored. Inline `# noqa` is precise to the line, self-documenting, and keeps the safety net intact for the rest of the file.
+
+Reserve `per-file-ignores` for **categorical policy** that applies to a whole class of files (e.g., `"tests/**" = ["D1", "S101"]` — tests don't need docstrings, `assert` is expected). These are not exceptions; they are different rules for a different context.
+
+```toml
+# GOOD – categorical policy in pyproject.toml
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D1", "S101"]
+
+# BAD – single-line exception buried in pyproject.toml
+"deepagents_cli/agent.py" = ["PLR2004"]
 ```
-deepagents-cli ──> deepagents
-deepagents-acp ──> deepagents
-deepagents-harbor ──> deepagents, deepagents-cli
-langchain-daytona ──> deepagents
+
+```python
+# GOOD – precise, self-documenting inline suppression
+timeout = 30  # noqa: PLR2004  # default HTTP timeout, not arbitrary
 ```
 
-When modifying the SDK (`libs/deepagents`), you must also run CLI tests since the CLI depends on the SDK.
+- `pytest` – Testing framework
 
-### Package configuration
+This monorepo uses `uv` for dependency management. Local development uses editable installs: `[tool.uv.sources]`
 
-Each package in `libs/` has its own `pyproject.toml` and `uv.lock`:
-
-| Package | Python Version | Build System | Entry Point |
-|---------|---------------|--------------|-------------|
-| deepagents | >=3.11,<4.0 | setuptools | `create_deep_agent()` |
-| deepagents-cli | >=3.11,<4.0 | hatchling | `deepagents`, `deepagents-cli` |
-| deepagents-acp | >=3.11 | hatchling | `deepagents-acp` |
-| deepagents-harbor | >=3.12 | setuptools | N/A (library) |
-| langchain-daytona | >=3.11,<4.0 | hatchling | N/A (library) |
-
-## Technology stack
-
-- **Python**: 3.11+ (3.12+ for harbor)
-- **Package manager**: `uv` — Fast Python package installer and resolver
-- **Build backends**: setuptools, hatchling
-- **Task runner**: `make` — See `Makefile` in each package
-- **Linter/Formatter**: `ruff` — Fast Python linter and formatter
-- **Type checker**: `ty` — Static type checking (CLI only)
-- **Testing**: `pytest` — Testing framework with pytest-asyncio, pytest-socket, pytest-timeout
-- **UI Framework**: Textual (for CLI) — Terminal UI framework
-
-## Build and test commands
-
-### SDK (`libs/deepagents/`)
+Each package in `libs/` has its own `pyproject.toml` and `uv.lock`.
 
 ```bash
 # Run unit tests (no network)
 make test
 
-# Run integration tests (network allowed)
-make integration_test
-
-# Run tests in watch mode
-make test_watch
-
-# Run with coverage
-make coverage
-
-# Lint and format
-make lint
-make format
-
 # Run specific test file
 uv run --group test pytest tests/unit_tests/test_specific.py
 ```
 
-### CLI (`libs/cli/`)
-
 ```bash
-# Run unit tests
-make test
+# Lint code
+make lint
 
-# Run integration tests
-make integration_test
-
-# Type checking (CLI only)
-make type
-
-# Run the CLI locally
-make run
-# or
-uvx --no-cache --reinstall .
+# Format code
+make format
 ```
 
-### General uv commands
+#### Key config files
 
-```bash
-# Sync dependencies
-uv sync --group test --locked
+- pyproject.toml: Main workspace configuration with dependency groups
+- uv.lock: Locked dependencies for reproducible builds
+- Makefile: Development tasks
 
-# Run a command with dependencies
-uv run --group test pytest
+#### Commit standards
 
-# Install a package in editable mode
-uv pip install -e .
+Suggest PR titles that follow Conventional Commits format. Refer to .github/workflows/pr_lint for allowed types and scopes. Note that all commit/PR titles should be in lowercase with the exception of proper nouns/named entities. All PR titles should include a scope with no exceptions. For example:
+
+```txt
+feat(sdk): add new chat completion feature
+fix(cli): resolve type hinting issue
+chore(harbor): update infrastructure dependencies
 ```
 
-## Code organization
+#### Pull request guidelines
 
-### Deep Agents SDK (`libs/deepagents/deepagents/`)
+- Always add a disclaimer to the PR description mentioning how AI agents are involved with the contribution.
+- Describe the "why" of the changes, why the proposed solution is the right one. Limit prose.
+- Highlight areas of the proposed changes that require careful review.
 
-```
-deepagents/
-├── __init__.py           # Public API exports
-├── _version.py           # Version string
-├── graph.py              # Main `create_deep_agent()` function
-├── backends/             # Pluggable storage backends
-│   ├── protocol.py       # BackendProtocol and SandboxBackendProtocol
-│   ├── state.py          # StateBackend (in-memory state storage)
-│   ├── filesystem.py     # FilesystemBackend (disk storage)
-│   ├── store.py          # StoreBackend (LangGraph store integration)
-│   ├── composite.py      # CompositeBackend (combines multiple)
-│   ├── sandbox.py        # Sandbox backend utilities
-│   ├── local_shell.py    # Local shell execution
-│   └── utils.py          # Backend utilities
-└── middleware/           # Agent middleware
-    ├── filesystem.py     # FilesystemMiddleware (file tools)
-    ├── memory.py         # MemoryMiddleware (AGENTS.md loading)
-    ├── skills.py         # SkillsMiddleware (skill loading)
-    ├── subagents.py      # SubAgentMiddleware (sub-agent spawning)
-    ├── summarization.py  # SummarizationMiddleware (context management)
-    └── patch_tool_calls.py  # Tool call patching middleware
-```
+## Core development principles
 
-### Deep Agents CLI (`libs/cli/deepagents_cli/`)
+### Maintain stable public interfaces
 
-```
-deepagents_cli/
-├── __init__.py           # Public API exports
-├── __main__.py           # Entry point for `python -m deepagents_cli`
-├── main.py               # Main CLI entry point
-├── agent.py              # Agent configuration and setup
-├── app.py                # Main Textual application
-├── config.py             # Configuration management
-├── tools.py              # Tool definitions for CLI
-├── sessions.py           # Session management
-├── backends.py           # Backend configuration
-├── file_ops.py           # File operations
-├── ui.py                 # UI rendering logic
-├── skills/               # Skills system
-│   ├── commands.py       # Skill CLI commands
-│   └── load.py           # Skill loading logic
-├── integrations/         # Third-party integrations
-│   ├── daytona.py        # Daytona sandbox
-│   ├── modal.py          # Modal sandbox
-│   ├── runloop.py        # Runloop sandbox
-│   ├── langsmith.py      # LangSmith integration
-│   └── sandbox_factory.py # Sandbox factory
-└── widgets/              # Textual widgets
-    ├── messages.py       # Message display
-    ├── chat_input.py     # Chat input
-    ├── approval.py       # Human-in-the-loop approval
-    ├── tool_widgets.py   # Tool execution display
-    └── ...
+CRITICAL: Always attempt to preserve function signatures, argument positions, and names for exported/public methods. Do not make breaking changes.
+
+You should warn the developer for any function signature changes, regardless of whether they look breaking or not.
+
+**Before making ANY changes to public APIs:**
+
+- Check if the function/class is exported in `__init__.py`
+- Look for existing usage patterns in tests and examples
+- Use keyword-only arguments for new parameters: `*, new_param: str = "default"`
+- Mark experimental features clearly with docstring warnings (using MkDocs Material admonitions, like `!!! warning`)
+
+Ask: "Would this change break someone's code if they used it last week?"
+
+### Code quality standards
+
+All Python code MUST include type hints and return types.
+
+```python title="Example"
+def filter_unknown_users(users: list[str], known_users: set[str]) -> list[str]:
+    """Single line description of the function.
+
+    Any additional context about the function can go here.
+
+    Args:
+        users: List of user identifiers to filter.
+        known_users: Set of known/valid user identifiers.
+
+    Returns:
+        List of users that are not in the `known_users` set.
+    """
 ```
 
-## Key architectural concepts
-
-### Backends
-
-Backends provide pluggable file storage and execution capabilities:
-
-- **`BackendProtocol`**: Base protocol for file operations (read, write, edit, ls, glob, grep)
-- **`SandboxBackendProtocol`**: Extends `BackendProtocol` with `execute()` for shell commands
-- **`StateBackend`**: Stores files in LangGraph state (default)
-- **`FilesystemBackend`**: Stores files on local disk
-- **`StoreBackend`**: Uses LangGraph store for persistence
-- **`CompositeBackend`**: Combines multiple backends with priority ordering
-- **`LocalShellBackend`**: Executes shell commands locally
-
-### Middleware
-
-Middleware wraps agent execution to add capabilities:
-
-- **`TodoListMiddleware`**: Manages todo lists for planning
-- **`FilesystemMiddleware`**: Adds file operation tools
-- **`SubAgentMiddleware`**: Enables sub-agent spawning via `task` tool
-- **`SummarizationMiddleware`**: Auto-summarizes long conversations
-- **`MemoryMiddleware`**: Loads `AGENTS.md` files into context
-- **`SkillsMiddleware`**: Loads and injects skill files
-
-### Sub-agents
-
-Sub-agents allow delegation to specialized agents:
-
-```python
-SubAgent = {
-    "name": str,
-    "description": str,
-    "prompt": str,
-    "tools": list[BaseTool],
-    "model": BaseChatModel,
-    "middleware": list[AgentMiddleware]
-}
-```
-
-### Skills
-
-Skills are reusable capabilities defined in `SKILL.md` files with YAML frontmatter:
-
-```markdown
----
-name: skill-name
-description: What this skill does
----
-
-# Skill instructions in markdown...
-```
-
-Skills are loaded from backend sources (paths) and injected into the system prompt.
-
-## Code style guidelines
-
-### General rules
-
-- All Python code MUST include type hints and return types
-- Use descriptive, self-explanatory variable names
-- Follow existing patterns in the codebase
-- Break up complex functions (>20 lines) into smaller, focused functions
+- Use descriptive, self-explanatory variable names.
+- Follow existing patterns in the codebase you're modifying
+- Attempt to break up complex functions (>20 lines) into smaller, focused functions where it makes sense
 - Avoid using the `any` type
 - Prefer single word variable names where possible
-- Use American English spelling (e.g., "behavior", not "behaviour")
 
-### Imports
+### Testing requirements
 
-```python
-# Standard library
-from collections.abc import Callable
-from typing import Any
+Every new feature or bugfix MUST be covered by unit tests.
 
-# Third-party
-from langchain_core.tools import BaseTool
-from langgraph.graph.state import CompiledStateGraph
+- Unit tests: `tests/unit_tests/` (no network calls allowed)
+- Integration tests: `tests/integration_tests/` (network calls permitted)
+- We use `pytest` as the testing framework; if in doubt, check other existing tests for examples.
+- The testing file structure should mirror the source code structure.
+- Avoid mocks as much as possible
+- Test actual implementation, do not duplicate logic into tests
 
-# First-party
-from deepagents.backends import StateBackend
-```
+Ensure the following:
 
-### Docstrings
+- Does the test suite fail if your new logic is broken?
+- Edge cases and error conditions are tested
+- Tests are deterministic (no flaky tests)
 
-Use Google-style docstrings with Args section for all public functions:
+### Security and risk assessment
 
-```python
+- No `eval()`, `exec()`, or `pickle` on user-controlled input
+- Proper exception handling (no bare `except:`) and use a `msg` variable for error messages
+- Remove unreachable/commented code before committing
+- Race conditions or resource leaks (file handles, sockets, threads).
+- Ensure proper resource cleanup (file handles, connections)
+
+### Documentation standards
+
+Use Google-style docstrings with Args section for all public functions.
+
+```python title="Example"
 def send_email(to: str, msg: str, *, priority: str = "normal") -> bool:
     """Send an email to a recipient with specified priority.
 
@@ -295,250 +184,43 @@ def send_email(to: str, msg: str, *, priority: str = "normal") -> bool:
     """
 ```
 
-Notes:
 - Types go in function signatures, NOT in docstrings
-- If a default is present, DO NOT repeat it in the docstring
-- Use single backticks (`` `code` ``) for inline code references, NOT Sphinx-style double backticks
+  - If a default is present, DO NOT repeat it in the docstring unless there is post-processing or it is set conditionally.
 - Focus on "why" rather than "what" in descriptions
-
-### Ruff configuration
-
-Each package has its own ruff configuration in `pyproject.toml`:
-
-- Line length: 150 (deepagents), 100 (acp, harbor)
-- Google-style docstrings: `convention = "google"`
-- First-party packages recognized for import sorting
-
-## Testing instructions
-
-### Test structure
-
-```
-tests/
-├── unit_tests/           # No network calls allowed
-│   ├── backends/         # Backend tests
-│   └── middleware/       # Middleware tests
-└── integration_tests/    # Network calls permitted
-```
-
-### Unit tests
-
-- Run with: `make test` or `uv run --group test pytest -vvv --disable-socket --allow-unix-socket tests/unit_tests/`
-- No network calls allowed (enforced by `pytest-socket`)
-- Tests should be deterministic (no flaky tests)
-- Avoid mocks as much as possible
-- Test actual implementation, do not duplicate logic into tests
-
-### Integration tests
-
-- Run with: `make integration_test` or `uv run --group test pytest -n auto -vvv --timeout 30 tests/integration_tests/`
-- Network calls permitted
-- Uses pytest-xdist for parallel execution (`-n auto`)
-- 30-second timeout per test
-
-### Writing tests
-
-```python
-# Example test structure
-def test_feature_happy_path() -> None:
-    """Test the happy path of feature X."""
-    # Arrange
-    input_data = ...
-    
-    # Act
-    result = function_under_test(input_data)
-    
-    # Assert
-    assert result == expected_output
-```
-
-Checklist for new tests:
-- [ ] Tests fail when your new logic is broken
-- [ ] Happy path is covered
-- [ ] Edge cases and error conditions are tested
-- [ ] Use fixtures/mocks for external dependencies
-- [ ] Tests are deterministic (no flaky tests)
-
-## Development workflow
-
-### Setup
-
-1. Install `uv`: https://docs.astral.sh/uv/getting-started/installation/
-2. Clone the repository
-3. Navigate to a package directory: `cd libs/deepagents`
-4. Sync dependencies: `uv sync --group test --locked`
-
-### Making changes
-
-1. Create a feature branch
-2. Make your changes
-3. Run tests: `make test`
-4. Run linting: `make lint`
-5. Run formatting: `make format`
-6. Commit with a conventional commit message
-
-### Pre-commit hooks
-
-The repository uses pre-commit hooks for code quality:
-
-```bash
-# Install hooks
-pre-commit install
-
-# Run manually
-pre-commit run --all-files
-```
-
-## CI/CD
-
-### GitHub Actions workflows
-
-| Workflow | Trigger | Purpose |
-|----------|---------|---------|
-| `ci.yml` | PR, push to master | Run linting and tests on changed packages |
-| `_lint.yml` | Called by ci.yml | Reusable linting workflow |
-| `_test.yml` | Called by ci.yml | Reusable testing workflow |
-| `pr_lint.yml` | PR edit/open | Validate PR title follows Conventional Commits |
-| `release-please.yml` | Push to master | Automated releases |
-
-### CI behavior
-
-- Only packages with changes are tested
-- SDK changes also trigger CLI tests
-- Pushes to master run full CI
-- Python version matrix: 3.11, 3.12, 3.13, 3.14
-
-### PR title format (Conventional Commits)
-
-```
-<type>(<scope>): <description>
-
-[optional body]
-
-[optional footer(s)]
-```
-
-**Types**: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert, release, hotfix
-
-**Scopes**: deepagents, sdk, deepagents-cli, cli, harbor, acp, examples, infra, deps, daytona
-
-**Examples**:
-- `feat(sdk): add multi-agent support`
-- `fix(cli): resolve flag parsing error`
-- `docs: update API usage examples`
-
-**Rules**:
-1. Type must start with lowercase
-2. Breaking changes: append `!` after type/scope (e.g., `feat!: drop x support`)
-3. Release commits: `release(scope): x.y.z`
-4. PR titles should include a scope (with exceptions for docs-only changes)
-5. All PR titles should be lowercase except for proper nouns
-
-## Release process
-
-The project uses `release-please` for automated releases:
-
-1. Merging a PR with conventional commit triggers release-please
-2. Release-please creates a release PR with changelog updates
-3. Merging the release PR creates a GitHub release
-4. The release workflow publishes to PyPI
-
-### Version management
-
-- Versions are stored in `pyproject.toml` and `_version.py`
-- `release-please-config.json` configures the release behavior
-- Tag format: `deepagents-cli==0.0.19` (component included)
-
-## Security considerations
-
-- **No `eval()`, `exec()`, or `pickle` on user-controlled input**
-- Proper exception handling (no bare `except:`)
-- Use a `msg` variable for error messages
-- Remove unreachable/commented code before committing
-- Check for race conditions or resource leaks
-- Ensure proper resource cleanup (file handles, connections)
-- Deep Agents follows a "trust the LLM" model — enforce boundaries at the tool/sandbox level
-
-## Maintaining stable public interfaces
-
-**CRITICAL**: Always attempt to preserve function signatures, argument positions, and names for exported/public methods. Do not make breaking changes.
-
-**Before making ANY changes to public APIs:**
-- Check if the function/class is exported in `__init__.py`
-- Look for existing usage patterns in tests and examples
-- Use keyword-only arguments for new parameters: `*, new_param: str = "default"`
-- Mark experimental features clearly with docstring warnings (using MkDocs Material admonitions, like `!!! warning`)
-
-**Ask**: "Would this change break someone's code if they used it last week?"
+- Document all parameters, return values, and exceptions
+- Keep descriptions concise but clear
+- Ensure American English spelling (e.g., "behavior", not "behaviour")
+- Do NOT use Sphinx-style double backtick formatting (` ``code`` `). Use single backticks (`` `code` ``) for inline code references in docstrings and comments.
 
 ## Package-specific guidance
 
-### Deep Agents CLI
+### Deep Agents CLI (`libs/cli/`)
 
 `deepagents-cli` uses [Textual](https://textual.textualize.io/) for its terminal UI framework.
 
 **Key Textual resources:**
+
 - **Guide:** https://textual.textualize.io/guide/
 - **Widget gallery:** https://textual.textualize.io/widget_gallery/
 - **CSS reference:** https://textual.textualize.io/styles/
 - **API reference:** https://textual.textualize.io/api/
 
-**Textual patterns used:**
-- **Workers** (`@work` decorator) for async operations
-- **Message passing** for widget communication
-- **Reactive attributes** for state management
+**Textual patterns used in this codebase:**
+
+- **Workers** (`@work` decorator) for async operations - see [Workers guide](https://textual.textualize.io/guide/workers/)
+- **Message passing** for widget communication - see [Events guide](https://textual.textualize.io/guide/events/)
+- **Reactive attributes** for state management - see [Reactivity guide](https://textual.textualize.io/guide/reactivity/)
+
+**Building chat/streaming interfaces:**
+
+- Blog post: [Anatomy of a Textual User Interface](https://textual.textualize.io/blog/2024/09/15/anatomy-of-a-textual-user-interface/) - demonstrates building an AI chat interface with streaming responses
 
 **Testing Textual apps:**
-- Use `textual.pilot` for async UI testing
-- Snapshot testing available for visual regression
 
-**File Upload Command**:
-The CLI provides a `/upload <path>` command for uploading files:
-- Files are validated for type and size (max 100MB)
-- Allowed types: text, code, JSON, PDF, images, archives, Office documents
-- Files are stored in the backend at `/uploads/<filename>`
-- After upload, type-specific guidance is displayed (e.g., use `pdftotext` for PDFs)
+- Use `textual.pilot` for async UI testing - see [Testing guide](https://textual.textualize.io/guide/testing/)
+- Snapshot testing available for visual regression - see repo `notes/snapshot_testing.md`
 
-### Deep Agents ACP
+## Additional resources
 
-The ACP (Agent Client Protocol) package provides integration with editors like Zed.
-
-- Entry point: `run.sh` shell script
-- Configuration: `.env` file for API keys
-- Zed integration: Add to `settings.json` under `agent_servers`
-
-### Deep Agents Harbor
-
-Harbor is an evaluation framework for benchmarking agents.
-
-- Uses `harbor` CLI for running benchmarks
-- Integrates with LangSmith for tracing
-- Supports multiple sandbox environments (Docker, Daytona, Modal, Runloop)
-- Default benchmark: Terminal Bench 2.0
-
-## Documentation
-
-- **Documentation site**: https://docs.langchain.com/oss/python/deepagents/overview
-- **API Reference**: https://reference.langchain.com/python/deepagents/
-- **Contributing Guide**: https://docs.langchain.com/oss/python/contributing/overview
-- **Local docs**: Check `../docs/` if available locally
-
-## Contributing checklist
-
-When submitting a PR:
-
-- [ ] Add a disclaimer to the PR description mentioning AI agent involvement
-- [ ] Describe the "why" of the changes
-- [ ] Highlight areas requiring careful review
-- [ ] Follow Conventional Commits format for PR title
-- [ ] Ensure all tests pass
-- [ ] Ensure linting passes
-- [ ] Update documentation if needed
-- [ ] Update AGENTS.md if changing development workflows or architecture
-
-## Useful links
-
-- **LangGraph docs**: https://docs.langchain.com/oss/python/langgraph/overview
-- **LangChain docs**: https://python.langchain.com/
-- **UV documentation**: https://docs.astral.sh/uv/
-- **Textual documentation**: https://textual.textualize.io/
+- **Documentation:** https://docs.langchain.com/oss/python/deepagents/overview and source at https://github.com/langchain-ai/docs or `../docs/`. Prefer the local install and use file search tools for best results. If needed, use the docs MCP server as defined in `.mcp.json` for programmatic access.
+- **Contributing Guide:** [Contributing Guide](https://docs.langchain.com/oss/python/contributing/overview)
