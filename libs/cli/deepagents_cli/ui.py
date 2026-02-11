@@ -11,7 +11,6 @@ from deepagents_cli._version import __version__
 from deepagents_cli.backends import DEFAULT_EXECUTE_TIMEOUT
 from deepagents_cli.config import (
     COLORS,
-    DOCS_URL,
     MAX_ARG_LENGTH,
     _is_editable_install,
     console,
@@ -250,7 +249,7 @@ def show_help() -> None:
     )
     console.print()
     console.print(
-        f"Docs: [link={DOCS_URL}]{DOCS_URL}[/link]",
+        "Docs: [link=https://docs.langchain.com/oss/python/deepagents/cli]https://docs.langchain.com/oss/python/deepagents/cli[/link]",
         style=COLORS["dim"],
     )
     console.print()
