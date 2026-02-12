@@ -29,7 +29,7 @@ class ResilientDaytonaBackend:
     """自动重建的 Daytona Backend 包装器。
     
     当底层 sandbox 停止或出错时自动创建新的 sandbox。
-    使用 auto_stop_interval=-1 永不自动停止。
+    使用 auto_stop_interval=60 1小时后自动停止。
     """
     
     def __init__(self):
@@ -45,13 +45,13 @@ class ResilientDaytonaBackend:
         """创建新的 sandbox，设置永不自动停止。"""
         from daytona import CreateSandboxFromImageParams
         
-        print(f"[Sandbox] Creating new Daytona sandbox (auto_stop_interval=-1)...")
+        print(f"[Sandbox] Creating new Daytona sandbox (auto_stop_interval=60min)...")
         
         # 使用 CreateSandboxFromImageParams 创建长时间运行的 sandbox
-        # auto_stop_interval=0 表示永不自动停止（根据文档）
+        # auto_stop_interval=60 表示60分钟后自动停止（根据文档）
         params = CreateSandboxFromImageParams(
             image="daytonaio/sandbox:0.5.1",
-            auto_stop_interval=0,  # 0 = 永不自动停止
+            auto_stop_interval=60,  # 60 = 1小时后自动停止
             auto_archive_interval=10080,  # 7天后归档
             resources={"cpu": "1", "memory": "2", "disk": "10"}
         )
