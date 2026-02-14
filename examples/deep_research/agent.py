@@ -18,6 +18,7 @@ from research_agent.prompts import (
 )
 from research_agent.tools import web_search, think_tool
 from research_agent.crawler_tool import fetch_webpage
+from state_sync_backend import StateSyncBackend
 
 # ============================================
 # 沙盒后端配置（带自动重建的健壮实现）
@@ -275,6 +276,81 @@ research_sub_agent = {
 }
 
 # ============================================
+# 第三方模型 Profile 注册表
+# LangChain 仅内置 OpenAI 官方模型的 profile，
+# 第三方模型需手动补充以确保 SummarizationMiddleware 正确计算上下文阈值。
+# ============================================
+MODEL_PROFILES: dict[str, dict[str, object]] = {
+    # DeepSeek
+    "deepseek-chat": {
+        "max_input_tokens": 128_000,
+        "max_output_tokens": 8_192,
+        "tool_calling": True,
+        "structured_output": True,
+    },
+    "deepseek-reasoner": {
+        "max_input_tokens": 128_000,
+        "max_output_tokens": 65_536,
+        "tool_calling": True,
+        "reasoning_output": True,
+    },
+    # DashScope / 通义千问 (Qwen3)
+    "qwen3-max": {
+        "max_input_tokens": 258_048,
+        "max_output_tokens": 65_536,
+        "tool_calling": True,
+        "structured_output": True,
+    },
+    "qwen3-vl-plus": {
+        "max_input_tokens": 262_144,
+        "max_output_tokens": 32_768,
+        "tool_calling": True,
+        "image_inputs": True,
+    },
+    "qwen-plus": {
+        "max_input_tokens": 997_952,
+        "max_output_tokens": 32_768,
+        "tool_calling": True,
+    },
+    "qwen-turbo": {
+        "max_input_tokens": 1_000_000,
+        "max_output_tokens": 16_384,
+        "tool_calling": True,
+    },
+    "qwen-long": {
+        "max_input_tokens": 10_000_000,
+        "max_output_tokens": 8_192,
+        "tool_calling": True,
+    },
+}
+
+
+def _ensure_model_profile(model: ChatOpenAI, model_name: str) -> None:
+    """确保模型具有正确的 profile（含 max_input_tokens）。
+
+    如果 LangChain 已为该模型自动加载了包含 max_input_tokens 的 profile，
+    则不覆盖。否则从 MODEL_PROFILES 注册表中查找并注入。
+
+    Args:
+        model: ChatOpenAI 模型实例。
+        model_name: 模型名称，用于在注册表中查找。
+    """
+    # 检查是否已有有效 profile
+    if (
+        model.profile
+        and isinstance(model.profile, dict)
+        and isinstance(model.profile.get("max_input_tokens"), int)
+    ):
+        return
+
+    profile = MODEL_PROFILES.get(model_name)
+    if profile:
+        model.profile = profile.copy()
+        print(f"[Model] Injected profile for {model_name}: "
+              f"max_input={profile['max_input_tokens']:,} tokens")
+
+
+# ============================================
 # 模型配置: 支持多提供商 (OpenAI / DashScope / DeepSeek)
 # ============================================
 def create_model():
@@ -288,13 +364,15 @@ def create_model():
             raise ValueError("DEEPSEEK_API_KEY not set in environment")
         model_name = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")  # deepseek-chat 或 deepseek-reasoner
         print(f"[Model] Using DeepSeek: {model_name}")
-        return ChatOpenAI(
+        model = ChatOpenAI(
             model=model_name,
             api_key=api_key,
             base_url="https://api.deepseek.com/v1",
             temperature=0.0,
         )
-    
+        _ensure_model_profile(model, model_name)
+        return model
+
     elif provider == "dashscope":
         # 通义千问 (DashScope) 配置
         api_key = os.getenv("DASHSCOPE_API_KEY")
@@ -302,13 +380,15 @@ def create_model():
             raise ValueError("DASHSCOPE_API_KEY not set in environment")
         model_name = os.getenv("DASHSCOPE_MODEL", "qwen-plus")
         print(f"[Model] Using DashScope: {model_name}")
-        return ChatOpenAI(
+        model = ChatOpenAI(
             model=model_name,
             api_key=api_key,
             base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
             temperature=0.0,
         )
-    
+        _ensure_model_profile(model, model_name)
+        return model
+
     elif provider == "openai":
         # OpenAI 配置
         api_key = os.getenv("OPENAI_API_KEY")
@@ -317,24 +397,28 @@ def create_model():
         model_name = os.getenv("OPENAI_MODEL", "gpt-4")
         base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
         print(f"[Model] Using OpenAI: {model_name}")
-        return ChatOpenAI(
+        model = ChatOpenAI(
             model=model_name,
             api_key=api_key,
             base_url=base_url,
             temperature=0.0,
         )
-    
+        _ensure_model_profile(model, model_name)
+        return model
+
     else:
         raise ValueError(f"Unknown MODEL_PROVIDER: {provider}. Supported: deepseek, dashscope, openai")
 
 # 创建模型实例
 model = create_model()
 
-# Create the agent with sandbox backend
+# Create the agent with state-synced sandbox backend
+# StateSyncBackend wraps the sandbox to sync file metadata to LangGraph state
+# This enables UI visibility (ContextPanel) while files are stored in the sandbox
 agent = create_deep_agent(
     model=model,
     tools=[web_search, think_tool, fetch_webpage],
     system_prompt=INSTRUCTIONS,
     subagents=[research_sub_agent],
-    backend=sandbox_backend,  # 使用 Daytona 云端沙盒
+    backend=StateSyncBackend(sandbox_backend),  # Wrap sandbox with state sync for UI visibility
 )
