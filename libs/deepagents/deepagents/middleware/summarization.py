@@ -33,6 +33,7 @@ of all evicted messages.
 from __future__ import annotations
 
 import logging
+import os
 import uuid
 import warnings
 from datetime import UTC, datetime
@@ -62,6 +63,70 @@ if TYPE_CHECKING:
     from deepagents.backends.protocol import BACKEND_TYPES, BackendProtocol
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Environment variables for fallback summarization settings
+# These are used when the model has no profile with max_input_tokens
+# =============================================================================
+
+ENV_FALLBACK_TRIGGER_TOKENS = "DEEPAGENTS_FALLBACK_TRIGGER_TOKENS"
+ENV_FALLBACK_KEEP_MESSAGES = "DEEPAGENTS_FALLBACK_KEEP_MESSAGES"
+ENV_FALLBACK_TRIGGER_MESSAGES = "DEEPAGENTS_FALLBACK_TRIGGER_MESSAGES"
+
+# Default fallback values (used when environment variables are not set)
+# These are intentionally conservative to prevent context overflow
+DEFAULT_FALLBACK_TRIGGER_TOKENS = 100_000  # Safer than original 170,000
+DEFAULT_FALLBACK_KEEP_MESSAGES = 6
+DEFAULT_FALLBACK_TRIGGER_MESSAGES = 20
+
+
+def _get_fallback_trigger_tokens() -> int:
+    """Get fallback trigger tokens from environment variable or use default."""
+    env_value = os.environ.get(ENV_FALLBACK_TRIGGER_TOKENS)
+    if env_value:
+        try:
+            return int(env_value)
+        except ValueError:
+            logger.warning(
+                "Invalid %s value '%s', using default %d",
+                ENV_FALLBACK_TRIGGER_TOKENS,
+                env_value,
+                DEFAULT_FALLBACK_TRIGGER_TOKENS,
+            )
+    return DEFAULT_FALLBACK_TRIGGER_TOKENS
+
+
+def _get_fallback_keep_messages() -> int:
+    """Get fallback keep messages from environment variable or use default."""
+    env_value = os.environ.get(ENV_FALLBACK_KEEP_MESSAGES)
+    if env_value:
+        try:
+            return int(env_value)
+        except ValueError:
+            logger.warning(
+                "Invalid %s value '%s', using default %d",
+                ENV_FALLBACK_KEEP_MESSAGES,
+                env_value,
+                DEFAULT_FALLBACK_KEEP_MESSAGES,
+            )
+    return DEFAULT_FALLBACK_KEEP_MESSAGES
+
+
+def _get_fallback_trigger_messages() -> int:
+    """Get fallback trigger messages from environment variable or use default."""
+    env_value = os.environ.get(ENV_FALLBACK_TRIGGER_MESSAGES)
+    if env_value:
+        try:
+            return int(env_value)
+        except ValueError:
+            logger.warning(
+                "Invalid %s value '%s', using default %d",
+                ENV_FALLBACK_TRIGGER_MESSAGES,
+                env_value,
+                DEFAULT_FALLBACK_TRIGGER_MESSAGES,
+            )
+    return DEFAULT_FALLBACK_TRIGGER_MESSAGES
 
 
 class TruncateArgsSettings(TypedDict, total=False):
@@ -99,7 +164,8 @@ def _compute_summarization_defaults(model: BaseChatModel) -> SummarizationDefaul
     Returns:
         Default settings for trigger, keep, and truncate_args_settings.
         If the model has a profile with max_input_tokens, uses fraction-based
-        settings. Otherwise, uses fixed token/message counts.
+        settings. Otherwise, uses fallback values from environment variables
+        or conservative defaults.
     """
     has_profile = (
         model.profile is not None
@@ -117,12 +183,30 @@ def _compute_summarization_defaults(model: BaseChatModel) -> SummarizationDefaul
                 "keep": ("fraction", 0.10),
             },
         }
+
+    # No profile available - use fallback values from environment variables
+    trigger_tokens = _get_fallback_trigger_tokens()
+    keep_messages = _get_fallback_keep_messages()
+    trigger_messages = _get_fallback_trigger_messages()
+
+    # Emit warning to help users diagnose potential issues
+    model_name = getattr(model, "model_name", getattr(model, "model", "unknown"))
+    logger.warning(
+        "Model '%s' has no profile with max_input_tokens. "
+        "Using fallback summarization settings: trigger=%d tokens, keep=%d messages. "
+        "To fix: set MODEL_MAX_INPUT_TOKENS environment variable, "
+        "or adjust fallback via DEEPAGENTS_FALLBACK_TRIGGER_TOKENS.",
+        model_name,
+        trigger_tokens,
+        keep_messages,
+    )
+
     return {
-        "trigger": ("tokens", 170000),
-        "keep": ("messages", 6),
+        "trigger": ("tokens", trigger_tokens),
+        "keep": ("messages", keep_messages),
         "truncate_args_settings": {
-            "trigger": ("messages", 20),
-            "keep": ("messages", 20),
+            "trigger": ("messages", trigger_messages),
+            "keep": ("messages", keep_messages),
         },
     }
 

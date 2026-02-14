@@ -738,6 +738,42 @@ def _detect_provider(model_name: str) -> str | None:
     return None
 
 
+def _build_model_profile_from_env() -> dict | None:
+    """Build model profile from environment variables.
+
+    Allows users to specify model capabilities when using models that LangChain
+    doesn't have built-in profile data for (e.g., DeepSeek, DashScope/Qwen via
+    OpenAI-compatible API).
+
+    Supported environment variables:
+        MODEL_MAX_INPUT_TOKENS: Maximum input tokens (required for profile to be built)
+        MODEL_MAX_OUTPUT_TOKENS: Maximum output tokens (optional)
+        MODEL_TOOL_CALLING: Whether tool calling is supported (optional, default: true)
+        MODEL_STRUCTURED_OUTPUT: Whether structured output is supported (optional)
+
+    Returns:
+        dict with profile data if MODEL_MAX_INPUT_TOKENS is set, None otherwise.
+        Returning None allows the model to use its default profile.
+    """
+    max_input = os.environ.get("MODEL_MAX_INPUT_TOKENS")
+    if not max_input:
+        return None
+
+    profile = {"max_input_tokens": int(max_input)}
+
+    if max_output := os.environ.get("MODEL_MAX_OUTPUT_TOKENS"):
+        profile["max_output_tokens"] = int(max_output)
+
+    # tool_calling defaults to True; only disable if explicitly set to false
+    tool_calling_env = os.environ.get("MODEL_TOOL_CALLING", "true").lower()
+    profile["tool_calling"] = tool_calling_env not in ("false", "0", "no")
+
+    if structured := os.environ.get("MODEL_STRUCTURED_OUTPUT"):
+        profile["structured_output"] = structured.lower() in ("true", "1", "yes")
+
+    return profile
+
+
 def create_model(model_name_override: str | None = None) -> BaseChatModel:
     """Create the appropriate model based on available API keys.
 
@@ -833,6 +869,11 @@ def create_model(model_name_override: str | None = None) -> BaseChatModel:
     settings.model_name = model_name
     settings.model_provider = provider
 
+    # Build model profile from environment variables (if configured)
+    # This allows users to specify model capabilities for models that
+    # LangChain doesn't have built-in profile data for
+    model_profile = _build_model_profile_from_env()
+
     # Create the model
     model: BaseChatModel
     if provider == "openai":
@@ -843,6 +884,7 @@ def create_model(model_name_override: str | None = None) -> BaseChatModel:
         model = ChatOpenAI(
             model=model_name,
             base_url=openai_base_url,
+            profile=model_profile,
         )  # type: ignore[call-arg]
     elif provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
@@ -850,6 +892,7 @@ def create_model(model_name_override: str | None = None) -> BaseChatModel:
         model = ChatAnthropic(
             model_name=model_name,
             max_tokens=20_000,
+            profile=model_profile,
         )
     elif provider == "google":
         from langchain_google_genai import ChatGoogleGenerativeAI
@@ -858,6 +901,7 @@ def create_model(model_name_override: str | None = None) -> BaseChatModel:
             model=model_name,
             temperature=0,
             max_tokens=None,
+            profile=model_profile,
         )
     elif provider == "vertexai":
         model_lower = model_name.lower()
@@ -884,6 +928,7 @@ def create_model(model_name_override: str | None = None) -> BaseChatModel:
                 project=settings.google_cloud_project,
                 location=os.environ.get("GOOGLE_CLOUD_LOCATION"),
                 max_tokens=20_000,
+                profile=model_profile,
             )
         else:
             from langchain_google_genai import ChatGoogleGenerativeAI
@@ -894,6 +939,7 @@ def create_model(model_name_override: str | None = None) -> BaseChatModel:
                 vertexai=True,
                 temperature=0,
                 max_tokens=None,
+                profile=model_profile,
             )
     else:
         # Should not reach here due to earlier validation
