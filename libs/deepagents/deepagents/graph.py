@@ -65,6 +65,7 @@ def create_deep_agent(
     debug: bool = False,
     name: str | None = None,
     cache: BaseCache | None = None,
+    history_path_prefix: str = "/conversation_history",
 ) -> CompiledStateGraph:
     """Create a deep agent.
 
@@ -137,6 +138,10 @@ def create_deep_agent(
         debug: Whether to enable debug mode. Passed through to `create_agent`.
         name: The name of the agent. Passed through to `create_agent`.
         cache: The cache to use for the agent. Passed through to `create_agent`.
+        history_path_prefix: Path prefix for storing conversation history during summarization.
+
+            Defaults to `/conversation_history`. For sandbox environments (Daytona, Modal, etc.),
+            set this to a writable path (e.g., `/home/daytona/conversation_history` for Daytona).
 
     Returns:
         A configured deep agent.
@@ -162,6 +167,7 @@ def create_deep_agent(
             keep=summarization_defaults["keep"],
             trim_tokens_to_summarize=None,
             truncate_args_settings=summarization_defaults["truncate_args_settings"],
+            history_path_prefix=history_path_prefix,
         ),
         AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
         PatchToolCallsMiddleware(),
@@ -202,6 +208,7 @@ def create_deep_agent(
                     keep=subagent_summarization_defaults["keep"],
                     trim_tokens_to_summarize=None,
                     truncate_args_settings=subagent_summarization_defaults["truncate_args_settings"],
+                    history_path_prefix=history_path_prefix,
                 ),
                 AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
                 PatchToolCallsMiddleware(),

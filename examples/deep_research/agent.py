@@ -76,20 +76,7 @@ class ResilientDaytonaBackend:
             # 忙等待，避免使用 sleep
         
         from deepagents_cli.integrations.daytona import DaytonaBackend
-        backend = DaytonaBackend(sandbox)
-
-        # Create writable conversation_history directory and symlink
-        # Daytona sandbox only has /home/daytona writable, so we:
-        # 1. Create /home/daytona/conversation_history
-        # 2. Symlink /conversation_history -> /home/daytona/conversation_history
-        try:
-            backend.execute("mkdir -p /home/daytona/conversation_history")
-            backend.execute("ln -sf /home/daytona/conversation_history /conversation_history")
-            print(f"[Sandbox] Created conversation_history symlink")
-        except Exception as e:
-            print(f"[Sandbox] Warning: Failed to create conversation_history: {e}")
-
-        return backend
+        return DaytonaBackend(sandbox)
     
     def _ensure_backend(self):
         """确保 backend 可用，如果不健康则重建。"""
@@ -428,10 +415,13 @@ model = create_model()
 # Create the agent with state-synced sandbox backend
 # StateSyncBackend wraps the sandbox to sync file metadata to LangGraph state
 # This enables UI visibility (ContextPanel) while files are stored in the sandbox
+# Note: history_path_prefix is set to /home/daytona/conversation_history because
+# Daytona sandbox only has /home/daytona writable (not the root / directory)
 agent = create_deep_agent(
     model=model,
     tools=[web_search, think_tool, fetch_webpage],
     system_prompt=INSTRUCTIONS,
     subagents=[research_sub_agent],
     backend=StateSyncBackend(sandbox_backend),  # Wrap sandbox with state sync for UI visibility
+    history_path_prefix="/home/daytona/conversation_history",  # Daytona writable path
 )
