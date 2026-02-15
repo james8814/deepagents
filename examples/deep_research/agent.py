@@ -76,7 +76,20 @@ class ResilientDaytonaBackend:
             # 忙等待，避免使用 sleep
         
         from deepagents_cli.integrations.daytona import DaytonaBackend
-        return DaytonaBackend(sandbox)
+        backend = DaytonaBackend(sandbox)
+
+        # Create writable conversation_history directory and symlink
+        # Daytona sandbox only has /home/daytona writable, so we:
+        # 1. Create /home/daytona/conversation_history
+        # 2. Symlink /conversation_history -> /home/daytona/conversation_history
+        try:
+            backend.execute("mkdir -p /home/daytona/conversation_history")
+            backend.execute("ln -sf /home/daytona/conversation_history /conversation_history")
+            print(f"[Sandbox] Created conversation_history symlink")
+        except Exception as e:
+            print(f"[Sandbox] Warning: Failed to create conversation_history: {e}")
+
+        return backend
     
     def _ensure_backend(self):
         """确保 backend 可用，如果不健康则重建。"""

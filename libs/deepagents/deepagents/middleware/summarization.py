@@ -28,6 +28,22 @@ Offloaded messages are stored as markdown at `/conversation_history/{thread_id}.
 
 Each summarization event appends a new section to this file, creating a running log
 of all evicted messages.
+
+## Sandbox Environments
+
+In sandbox environments (Daytona, Modal, Runloop), only specific paths may be writable.
+Use `CompositeBackend` to map `/conversation_history/` to a writable location:
+
+```python
+from deepagents.backends import CompositeBackend
+
+backend = CompositeBackend(
+    default=sandbox_backend,
+    mounts={
+        "/conversation_history/": sandbox_backend,  # Maps to sandbox's writable path
+    },
+)
+```
 """
 
 from __future__ import annotations
@@ -257,6 +273,9 @@ class SummarizationMiddleware(BaseSummarizationMiddleware):
                     # Truncate when 50% of context window reached, ignoring messages in last 10% of window
                     {"trigger": ("fraction", 0.5), "keep": ("fraction", 0.1), "max_length": 2000, "truncation_text": "...(truncated)"}
             history_path_prefix: Path prefix for storing conversation history.
+
+                Defaults to `/conversation_history`. For sandbox environments,
+                use CompositeBackend to map this path to a writable location.
 
         Example:
             ```python
