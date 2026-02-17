@@ -8,7 +8,7 @@ import pytest
 from rich.console import Console
 
 from deepagents_cli.agent import DEFAULT_AGENT_NAME
-from deepagents_cli.main import parse_args
+from deepagents_cli.main import _DEFAULT_AGENT_NAME, parse_args
 
 
 class TestInitialPromptArg:
@@ -222,3 +222,48 @@ class TestShortFlags:
         ):
             parse_args()
         assert exc_info.value.code in (0, None)
+
+
+class TestQuietArg:
+    """Tests for -q/--quiet argument parsing."""
+
+    def test_short_flag(self) -> None:
+        """Verify -q sets quiet=True."""
+        with patch.object(sys, "argv", ["deepagents", "-q", "-n", "task"]):
+            args = parse_args()
+        assert args.quiet is True
+
+    def test_long_flag(self) -> None:
+        """Verify --quiet sets quiet=True."""
+        with patch.object(sys, "argv", ["deepagents", "--quiet", "-n", "task"]):
+            args = parse_args()
+        assert args.quiet is True
+
+    def test_no_flag_defaults_false(self) -> None:
+        """Verify quiet is False when not provided."""
+        with patch.object(sys, "argv", ["deepagents"]):
+            args = parse_args()
+        assert args.quiet is False
+
+    def test_combined_with_non_interactive(self) -> None:
+        """Verify -q works alongside -n."""
+        with patch.object(sys, "argv", ["deepagents", "-q", "-n", "run tests"]):
+            args = parse_args()
+        assert args.quiet is True
+        assert args.non_interactive_message == "run tests"
+
+    def test_quiet_without_non_interactive_parses(self) -> None:
+        """Verify --quiet without -n parses successfully.
+
+        The usage-error guard now lives in `cli_main` (after stdin pipe
+        processing), so `parse_args` itself should not reject this combo.
+        """
+        with patch.object(sys, "argv", ["deepagents", "-q"]):
+            args = parse_args()
+        assert args.quiet is True
+        assert args.non_interactive_message is None
+
+
+def test_default_agent_name_matches_canonical() -> None:
+    """Ensure the duplicated constant in main.py stays in sync with agent.py."""
+    assert _DEFAULT_AGENT_NAME == DEFAULT_AGENT_NAME
