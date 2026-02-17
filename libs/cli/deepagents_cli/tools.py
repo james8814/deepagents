@@ -96,7 +96,7 @@ def http_request(
             content = response.text
 
         return {
-            "success": response.status_code < 400,
+            "success": response.status_code < 400,  # noqa: PLR2004  # HTTP status code threshold
             "status_code": response.status_code,
             "headers": dict(response.headers),
             "content": content,
@@ -121,7 +121,7 @@ def http_request(
         }
 
 
-def web_search(
+def web_search(  # noqa: ANN201  # Return type depends on dynamic tool configuration
     query: str,
     max_results: int = 5,
     topic: Literal["general", "news", "finance"] = "general",
