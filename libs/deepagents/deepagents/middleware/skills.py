@@ -102,7 +102,8 @@ if TYPE_CHECKING:
     from deepagents.backends.protocol import BACKEND_TYPES, BackendProtocol
 
 from collections.abc import Awaitable, Callable
-from typing import NotRequired, TypedDict
+from typing import Literal, NotRequired
+from typing_extensions import TypedDict
 
 from langchain.agents.middleware.types import (
     AgentMiddleware,
@@ -110,7 +111,10 @@ from langchain.agents.middleware.types import (
     ModelRequest,
     ModelResponse,
 )
+from langchain_core.tools import StructuredTool
+from langgraph.types import Command
 from langchain_core.runnables import RunnableConfig
+from langchain_core.messages import ToolMessage
 from langgraph.prebuilt import ToolRuntime
 from langgraph.runtime import Runtime
 
@@ -124,6 +128,122 @@ MAX_SKILL_FILE_SIZE = 10 * 1024 * 1024
 # Agent Skills specification constraints (https://agentskills.io/specification)
 MAX_SKILL_NAME_LENGTH = 64
 MAX_SKILL_DESCRIPTION_LENGTH = 1024
+
+# V2: Resource type mapping for standard skill resource directories
+RESOURCE_TYPE_MAP: dict[str, Literal["script", "reference", "asset"]] = {
+    "scripts": "script",
+    "references": "reference",
+    "assets": "asset",
+}
+
+
+class ResourceMetadata(TypedDict):
+    """技能资源文件的元数据。用于延迟发现策略，缓存技能目录下的资源文件信息。"""
+    path: str
+    """资源文件在 backend 中的完整路径。"""
+    type: Literal["script", "reference", "asset", "other"]
+    """资源类型，基于所在目录名推断。"""
+    skill_name: str
+    """所属技能的名称。"""
+
+
+# =============================================================================
+# V2: Lazy resource discovery functions
+# =============================================================================
+
+
+def _discover_resources(
+    backend: "BackendProtocol",
+    skill_dir: str,
+    skill_name: str,
+) -> list["ResourceMetadata"]:
+    """发现技能目录下的资源文件（同步版本）。扫描标准资源目录（仅第一层）。"""
+    resources: list["ResourceMetadata"] = []
+
+    try:
+        items = backend.ls_info(skill_dir)
+    except Exception:
+        logger.warning("Failed to list resources for skill '%s' at %s", skill_name, skill_dir)
+        return resources
+
+    for item in items:
+        item_path = item["path"]
+        item_name = PurePosixPath(item_path).name
+
+        if item.get("is_dir"):
+            resource_type = RESOURCE_TYPE_MAP.get(item_name)
+            if resource_type is None:
+                continue
+            try:
+                sub_items = backend.ls_info(item_path)
+            except Exception:
+                logger.warning("Failed to list resources in %s", item_path)
+                continue
+            for sub_item in sub_items:
+                if not sub_item.get("is_dir"):
+                    resources.append({"path": sub_item["path"], "type": resource_type, "skill_name": skill_name})
+        else:
+            if item_name != "SKILL.md":
+                resources.append({"path": item_path, "type": "other", "skill_name": skill_name})
+
+    return resources
+
+
+async def _adiscover_resources(
+    backend: "BackendProtocol",
+    skill_dir: str,
+    skill_name: str,
+) -> list["ResourceMetadata"]:
+    """发现技能目录下的资源文件（异步版本）。"""
+    resources: list["ResourceMetadata"] = []
+
+    try:
+        items = await backend.als_info(skill_dir)
+    except Exception:
+        logger.warning("Failed to list resources for skill '%s' at %s", skill_name, skill_dir)
+        return resources
+
+    for item in items:
+        item_path = item["path"]
+        item_name = PurePosixPath(item_path).name
+
+        if item.get("is_dir"):
+            resource_type = RESOURCE_TYPE_MAP.get(item_name)
+            if resource_type is None:
+                continue
+            try:
+                sub_items = await backend.als_info(item_path)
+            except Exception:
+                logger.warning("Failed to list resources in %s", item_path)
+                continue
+            for sub_item in sub_items:
+                if not sub_item.get("is_dir"):
+                    resources.append({"path": sub_item["path"], "type": resource_type, "skill_name": skill_name})
+        else:
+            if item_name != "SKILL.md":
+                resources.append({"path": item_path, "type": "other", "skill_name": skill_name})
+
+    return resources
+
+
+def _format_resource_summary(resources: list["ResourceMetadata"]) -> str:
+    """格式化资源摘要，按类型分组。"""
+    by_type: dict[str, int] = {}
+    for r in resources:
+        by_type[r["type"]] = by_type.get(r["type"], 0) + 1
+    parts = [f"{count} {rtype}{'s' if count > 1 else ''}" for rtype, count in sorted(by_type.items())]
+    return ", ".join(parts)
+
+
+def _format_skill_annotations(skill: "SkillMetadata") -> str:
+    """Format optional skill annotations (license, compatibility)."""
+    annotations = []
+    if skill.get("license"):
+        annotations.append(f"License: {skill['license']}")
+    if skill.get("compatibility"):
+        annotations.append(f"Compatibility: {skill['compatibility']}")
+    return "; ".join(annotations) if annotations else ""
+
 
 
 class SkillMetadata(TypedDict):
@@ -157,12 +277,25 @@ class SkillsState(AgentState):
     skills_metadata: NotRequired[Annotated[list[SkillMetadata], PrivateStateAttr]]
     """List of loaded skill metadata from configured sources. Not propagated to parent agents."""
 
+    # V2: Track which skills have been loaded (activated) by the agent
+    skills_loaded: NotRequired[Annotated[list[str], PrivateStateAttr]]
+    """已加载（激活）的技能名称列表。"""
+
+    # V2: Cache discovered skill resources for loaded skills
+    skill_resources: NotRequired[Annotated[dict[str, list[ResourceMetadata]], PrivateStateAttr]]
+    """已发现的技能资源映射，键为技能名称。"""
+
 
 class SkillsStateUpdate(TypedDict):
     """State update for the skills middleware."""
 
     skills_metadata: list[SkillMetadata]
     """List of loaded skill metadata to merge into state."""
+    # V2 fields
+    skills_loaded: list[str]
+    """List of loaded skill names."""
+    skill_resources: dict[str, list[ResourceMetadata]]
+    """Discovered skill resources cache."""
 
 
 def _validate_skill_name(name: str, directory_name: str) -> tuple[bool, str]:
@@ -502,17 +635,30 @@ class SkillsMiddleware(AgentMiddleware):
 
     state_schema = SkillsState
 
-    def __init__(self, *, backend: BACKEND_TYPES, sources: list[str]) -> None:
+    def __init__(
+        self,
+        *,
+        backend: BACKEND_TYPES,
+        sources: list[str],
+        max_loaded_skills: int = 10,
+    ) -> None:
         """Initialize the skills middleware.
 
         Args:
             backend: Backend instance or factory function that takes runtime and returns a backend.
                      Use a factory for StateBackend: `lambda rt: StateBackend(rt)`
             sources: List of skill source paths (e.g., ["/skills/user/", "/skills/project/"]).
+            max_loaded_skills: Maximum number of simultaneously loaded skills. Defaults to 10.
         """
         self._backend = backend
         self.sources = sources
         self.system_prompt_template = SKILLS_SYSTEM_PROMPT
+        self._max_loaded_skills = max_loaded_skills
+        # V2: Create tools for skill lifecycle management
+        self.tools = [
+            self._create_load_skill_tool(),
+            self._create_unload_skill_tool(),
+        ]
 
     def _get_backend(self, state: SkillsState, runtime: Runtime, config: RunnableConfig) -> BackendProtocol:
         """Resolve backend from instance or factory.
@@ -542,6 +688,12 @@ class SkillsMiddleware(AgentMiddleware):
 
         return self._backend
 
+    def _get_backend_from_runtime(self, runtime: "ToolRuntime[None, SkillsState]") -> "BackendProtocol":
+        """从 ToolRuntime 中解析 backend 实例，用于工具函数中。"""
+        if callable(self._backend):
+            return self._backend(runtime)
+        return self._backend
+
     def _format_skills_locations(self) -> str:
         """Format skills locations for display in system prompt."""
         locations = []
@@ -551,18 +703,43 @@ class SkillsMiddleware(AgentMiddleware):
             locations.append(f"**{name} Skills**: `{source_path}`{suffix}")
         return "\n".join(locations)
 
-    def _format_skills_list(self, skills: list[SkillMetadata]) -> str:
-        """Format skills metadata for display in system prompt."""
+    def _format_skills_list(
+        self,
+        skills: list[SkillMetadata],
+        loaded: list[str],
+        resources: dict[str, list["ResourceMetadata"]],
+    ) -> str:
+        """Format skills metadata for display in system prompt (V2 enhanced)."""
         if not skills:
             paths = [f"{source_path}" for source_path in self.sources]
             return f"(No skills available yet. You can create skills in {' or '.join(paths)})"
 
         lines = []
+        loaded_set = set(loaded)
+
         for skill in skills:
-            lines.append(f"- **{skill['name']}**: {skill['description']}")
+            name = skill["name"]
+            annotations = _format_skill_annotations(skill)
+            status = " [Loaded]" if name in loaded_set else ""
+            desc_line = f"- **{name}**{status}: {skill['description']}"
+            if annotations:
+                desc_line += f" ({annotations})"
+
+            skill_lines = [desc_line]
+
             if skill["allowed_tools"]:
-                lines.append(f"  -> Allowed tools: {', '.join(skill['allowed_tools'])}")
-            lines.append(f"  -> Read `{skill['path']}` for full instructions")
+                skill_lines.append(f"  -> Recommended tools: {', '.join(skill['allowed_tools'])}")
+
+            if name in loaded_set:
+                skill_resources = resources.get(name, [])
+                if skill_resources:
+                    resource_summary = _format_resource_summary(skill_resources)
+                    skill_lines.append(f"  -> Resources: {resource_summary}")
+
+            if name not in loaded_set:
+                skill_lines.append(f'  -> Use `load_skill("{name}")` to read full instructions')
+
+            lines.append("\n".join(skill_lines))
 
         return "\n".join(lines)
 
@@ -576,8 +753,10 @@ class SkillsMiddleware(AgentMiddleware):
             New model request with skills documentation injected into system message
         """
         skills_metadata = request.state.get("skills_metadata", [])
+        skills_loaded = request.state.get("skills_loaded", [])
+        skill_resources = request.state.get("skill_resources", {})
         skills_locations = self._format_skills_locations()
-        skills_list = self._format_skills_list(skills_metadata)
+        skills_list = self._format_skills_list(skills_metadata, skills_loaded, skill_resources)
 
         skills_section = self.system_prompt_template.format(
             skills_locations=skills_locations,
@@ -621,7 +800,11 @@ class SkillsMiddleware(AgentMiddleware):
                 all_skills[skill["name"]] = skill
 
         skills = list(all_skills.values())
-        return SkillsStateUpdate(skills_metadata=skills)
+        return SkillsStateUpdate(
+            skills_metadata=skills,
+            skills_loaded=[],
+            skill_resources={},
+        )
 
     async def abefore_agent(self, state: SkillsState, runtime: Runtime, config: RunnableConfig) -> SkillsStateUpdate | None:
         """Load skills metadata before agent execution (async).
@@ -656,7 +839,11 @@ class SkillsMiddleware(AgentMiddleware):
                 all_skills[skill["name"]] = skill
 
         skills = list(all_skills.values())
-        return SkillsStateUpdate(skills_metadata=skills)
+        return SkillsStateUpdate(
+            skills_metadata=skills,
+            skills_loaded=[],
+            skill_resources={},
+        )
 
     def wrap_model_call(
         self,
@@ -692,5 +879,238 @@ class SkillsMiddleware(AgentMiddleware):
         modified_request = self.modify_request(request)
         return await handler(modified_request)
 
+    # ==========================================================================
+    # V2: Tool methods for skill lifecycle management
+    # ==========================================================================
 
-__all__ = ["SkillMetadata", "SkillsMiddleware"]
+    def _create_load_skill_tool(self) -> "StructuredTool":
+        """创建 load_skill 工具。"""
+        def sync_load_skill(
+            skill_name: str,
+            runtime: "ToolRuntime[None, SkillsState]",
+        ) -> "Command | str":
+            """Load a skill's full instructions and discover its resources."""
+            backend = self._get_backend_from_runtime(runtime)
+            return self._execute_load_skill(backend, skill_name, runtime)
+
+        async def async_load_skill(
+            skill_name: str,
+            runtime: "ToolRuntime[None, SkillsState]",
+        ) -> "Command | str":
+            """Load a skill's full instructions and discover its resources (async)."""
+            backend = self._get_backend_from_runtime(runtime)
+            return await self._aexecute_load_skill(backend, skill_name, runtime)
+
+        return StructuredTool.from_function(
+            name="load_skill",
+            description="Load a skill's full instructions and discover its resources. Use this instead of read_file when you need to activate a skill.",
+            func=sync_load_skill,
+            coroutine=async_load_skill,
+        )
+
+    def _execute_load_skill(
+        self,
+        backend: "BackendProtocol",
+        skill_name: str,
+        runtime: "ToolRuntime[None, SkillsState]",
+    ) -> "Command | str":
+        """load_skill 核心逻辑（同步版本）。"""
+        state = runtime.state
+        skills_metadata = state.get("skills_metadata", [])
+        # 浅拷贝 dict 即可——后续代码仅添加/替换 key，不会原地修改已有 value 的内容
+        skill_resources = dict(state.get("skill_resources", {}))
+        loaded_skills = list(state.get("skills_loaded", []))
+
+        target_skill = None
+        for skill in skills_metadata:
+            if skill["name"] == skill_name:
+                target_skill = skill
+                break
+
+        if target_skill is None:
+            available = [s["name"] for s in skills_metadata]
+            return f"Error: Skill '{skill_name}' not found. Available skills: {', '.join(available)}"
+
+        if skill_name in loaded_skills:
+            return f"Skill '{skill_name}' is already loaded. Its instructions are already active."
+
+        if len(loaded_skills) >= self._max_loaded_skills:
+            return (
+                f"Error: Cannot load skill '{skill_name}'. "
+                f"Maximum number of simultaneously loaded skills reached ({self._max_loaded_skills}). "
+                f"Currently loaded: {', '.join(loaded_skills)}. "
+                f'Use `unload_skill("skill-name")` to unload a skill you no longer need, then retry loading.'
+            )
+
+        responses = backend.download_files([target_skill["path"]])
+        response = responses[0]
+
+        if response.error or response.content is None:
+            return f"Error: Failed to read skill file at {target_skill['path']}: {response.error}"
+
+        if len(response.content) > MAX_SKILL_FILE_SIZE:
+            return f"Error: Skill file at {target_skill['path']} exceeds maximum size ({MAX_SKILL_FILE_SIZE} bytes)"
+
+        try:
+            file_content = response.content.decode("utf-8")
+        except UnicodeDecodeError as e:
+            return f"Error: Failed to decode skill file: {e}"
+
+        if skill_name not in skill_resources:
+            from pathlib import PurePosixPath
+            skill_dir = str(PurePosixPath(target_skill["path"]).parent)
+            skill_resources[skill_name] = _discover_resources(backend, skill_dir, skill_name)
+
+        result_parts = [file_content]
+        resources = skill_resources.get(skill_name, [])
+        if resources:
+            result_parts.append("\n\n---\n**Skill Resources:**\n")
+            for resource in resources:
+                result_parts.append(f"- [{resource['type']}] `{resource['path']}`")
+
+        result_content = "\n".join(result_parts)
+        loaded_skills.append(skill_name)
+
+        # messages 放在 update 字典内部，这是 LangGraph Command 的标准模式
+        return Command(
+            update={
+                "skills_loaded": loaded_skills,
+                "skill_resources": skill_resources,
+                "messages": [ToolMessage(content=result_content, tool_call_id=runtime.tool_call_id)],
+            },
+        )
+
+    async def _aexecute_load_skill(
+        self,
+        backend: "BackendProtocol",
+        skill_name: str,
+        runtime: "ToolRuntime[None, SkillsState]",
+    ) -> "Command | str":
+        """load_skill 核心逻辑（异步版本）。"""
+        state = runtime.state
+        skills_metadata = state.get("skills_metadata", [])
+        skill_resources = dict(state.get("skill_resources", {}))
+        loaded_skills = list(state.get("skills_loaded", []))
+
+        target_skill = None
+        for skill in skills_metadata:
+            if skill["name"] == skill_name:
+                target_skill = skill
+                break
+
+        if target_skill is None:
+            available = [s["name"] for s in skills_metadata]
+            return f"Error: Skill '{skill_name}' not found. Available skills: {', '.join(available)}"
+
+        if skill_name in loaded_skills:
+            return f"Skill '{skill_name}' is already loaded. Its instructions are already active."
+
+        if len(loaded_skills) >= self._max_loaded_skills:
+            return (
+                f"Error: Cannot load skill '{skill_name}'. "
+                f"Maximum number of simultaneously loaded skills reached ({self._max_loaded_skills}). "
+                f"Currently loaded: {', '.join(loaded_skills)}. "
+                f'Use `unload_skill("skill-name")` to unload a skill you no longer need, then retry loading.'
+            )
+
+        responses = await backend.adownload_files([target_skill["path"]])
+        response = responses[0]
+
+        if response.error or response.content is None:
+            return f"Error: Failed to read skill file at {target_skill['path']}: {response.error}"
+
+        if len(response.content) > MAX_SKILL_FILE_SIZE:
+            return f"Error: Skill file at {target_skill['path']} exceeds maximum size ({MAX_SKILL_FILE_SIZE} bytes)"
+
+        try:
+            file_content = response.content.decode("utf-8")
+        except UnicodeDecodeError as e:
+            return f"Error: Failed to decode skill file: {e}"
+
+        if skill_name not in skill_resources:
+            from pathlib import PurePosixPath
+            skill_dir = str(PurePosixPath(target_skill["path"]).parent)
+            skill_resources[skill_name] = await _adiscover_resources(backend, skill_dir, skill_name)
+
+        result_parts = [file_content]
+        resources = skill_resources.get(skill_name, [])
+        if resources:
+            result_parts.append("\n\n---\n**Skill Resources:**\n")
+            for resource in resources:
+                result_parts.append(f"- [{resource['type']}] `{resource['path']}`")
+
+        result_content = "\n".join(result_parts)
+        loaded_skills.append(skill_name)
+
+        return Command(
+            update={
+                "skills_loaded": loaded_skills,
+                "skill_resources": skill_resources,
+                "messages": [ToolMessage(content=result_content, tool_call_id=runtime.tool_call_id)],
+            },
+        )
+
+    def _create_unload_skill_tool(self) -> "StructuredTool":
+        """创建 unload_skill 工具。"""
+        def sync_unload_skill(
+            skill_name: str,
+            runtime: "ToolRuntime[None, SkillsState]",
+        ) -> "Command | str":
+            """Unload a previously loaded skill to free up a loading slot."""
+            return self._execute_unload_skill(skill_name, runtime)
+
+        async def async_unload_skill(
+            skill_name: str,
+            runtime: "ToolRuntime[None, SkillsState]",
+        ) -> "Command | str":
+            """Unload a previously loaded skill to free up a loading slot (async)."""
+            return self._execute_unload_skill(skill_name, runtime)
+
+        return StructuredTool.from_function(
+            name="unload_skill",
+            description="Unload a previously loaded skill to free up a loading slot.",
+            func=sync_unload_skill,
+            coroutine=async_unload_skill,
+        )
+
+    def _execute_unload_skill(
+        self,
+        skill_name: str,
+        runtime: "ToolRuntime[None, SkillsState]",
+    ) -> "Command | str":
+        """unload_skill 核心逻辑（同步/异步共用，不涉及 I/O）。"""
+        state = runtime.state
+        loaded_skills = list(state.get("skills_loaded", []))
+        skill_resources = dict(state.get("skill_resources", {}))
+
+        if skill_name not in loaded_skills:
+            loaded_list = ', '.join(loaded_skills) if loaded_skills else '(none)'
+            return f"Error: Skill '{skill_name}' is not currently loaded. Currently loaded skills: {loaded_list}."
+
+        loaded_skills.remove(skill_name)
+        skill_resources.pop(skill_name, None)
+
+        remaining = len(loaded_skills)
+        available = self._max_loaded_skills - remaining
+
+        return Command(
+            update={
+                "skills_loaded": loaded_skills,
+                "skill_resources": skill_resources,
+                "messages": [
+                    ToolMessage(
+                        content=(
+                            f"Skill '{skill_name}' has been unloaded. "
+                            f"Currently loaded: {remaining}/{self._max_loaded_skills} ({available} slot(s) available). "
+                            f"Note: The skill's instructions from the previous load_skill call are still in the conversation history "
+                            f"but will no longer be marked as [Loaded] in the skills list."
+                        ),
+                        tool_call_id=runtime.tool_call_id,
+                    ),
+                ],
+            },
+        )
+
+
+
+__all__ = ["SkillMetadata", "SkillsMiddleware", "ResourceMetadata"]

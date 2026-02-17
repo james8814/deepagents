@@ -131,7 +131,7 @@ def generate_social_image(prompt: str, platform: str, slug: str) -> str:
         return f"Error: {e}"
 
 
-def load_subagents(config_path: Path) -> list:
+def load_subagents(config_path: Path, model=None):
     """Load subagent definitions from YAML and wire up tools.
 
     NOTE: This is a custom utility for this example. Unlike `memory` and `skills`,
@@ -154,7 +154,10 @@ def load_subagents(config_path: Path) -> list:
             "description": spec["description"],
             "system_prompt": spec["system_prompt"],
         }
-        if "model" in spec:
+        # 使用主 agent 相同的模型 (覆盖 YAML 中的硬编码)
+        if model is not None:
+            subagent["model"] = model
+        elif "model" in spec:
             subagent["model"] = spec["model"]
         if "tools" in spec:
             subagent["tools"] = [available_tools[t] for t in spec["tools"]]
@@ -165,11 +168,51 @@ def load_subagents(config_path: Path) -> list:
 
 def create_content_writer():
     """Create a content writer agent configured by filesystem files."""
+    # 支持 Qwen/DashScope 模型
+    import os
+    from langchain_openai import ChatOpenAI
+
+    provider = os.getenv("MODEL_PROVIDER", "anthropic").lower()
+    model_name = os.getenv("DASHSCOPE_MODEL", os.getenv("ANTHROPIC_MODEL", None))
+
+    if provider == "dashscope" and os.getenv("DASHSCOPE_API_KEY"):
+        # 使用 Qwen (通义千问)
+        model = ChatOpenAI(
+            model=model_name or "qwen-plus",
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            api_key=os.getenv("DASHSCOPE_API_KEY"),
+        )
+        print(f"[Model] 使用 Qwen: {model_name or 'qwen-plus'}")
+    elif provider == "anthropic" and os.getenv("ANTHROPIC_API_KEY"):
+        # 使用 Claude (默认)
+        from langchain_anthropic import ChatAnthropic
+        model = ChatAnthropic(
+            model_name=model_name or "claude-sonnet-4-5-20250929",
+            max_tokens=20000,
+        )
+        print(f"[Model] 使用 Claude: {model_name or 'claude-sonnet-4-5-20250929'}")
+    elif provider == "openai" and os.getenv("OPENAI_API_KEY"):
+        # 使用 OpenAI
+        model = ChatOpenAI(
+            model=model_name or "gpt-5.2",
+            api_key=os.getenv("OPENAI_API_KEY"),
+        )
+        print(f"[Model] 使用 OpenAI: {model_name or 'gpt-5.2'}")
+    else:
+        # 默认使用 Claude
+        from langchain_anthropic import ChatAnthropic
+        model = ChatAnthropic(
+            model_name="claude-sonnet-4-5-20250929",
+            max_tokens=20000,
+        )
+        print("[Model] 使用默认 Claude")
+
     return create_deep_agent(
+        model=model,
         memory=["./AGENTS.md"],           # Loaded by MemoryMiddleware
         skills=["./skills/"],             # Loaded by SkillsMiddleware
         tools=[generate_cover, generate_social_image],  # Image generation
-        subagents=load_subagents(EXAMPLE_DIR / "subagents.yaml"),  # Custom helper
+        subagents=load_subagents(EXAMPLE_DIR / "subagents.yaml", model),  # Custom helper
         backend=FilesystemBackend(root_dir=EXAMPLE_DIR),
     )
 

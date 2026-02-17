@@ -502,7 +502,7 @@ def test_format_skills_list_empty() -> None:
         sources=sources,
     )
 
-    result = middleware._format_skills_list([])
+    result = middleware._format_skills_list([], [], {})
     assert "No skills available" in result
     assert "/skills/user/" in result
     assert "/skills/project/" in result
@@ -528,10 +528,11 @@ def test_format_skills_list_single_skill() -> None:
         }
     ]
 
-    result = middleware._format_skills_list(skills)
+    result = middleware._format_skills_list(skills, [], {})
     assert "web-research" in result
     assert "Research topics on the web" in result
-    assert "/skills/user/web-research/SKILL.md" in result
+    # V2: Shows load_skill guidance instead of path
+    assert 'load_skill("web-research")' in result
 
 
 def test_format_skills_list_multiple_skills_multiple_registries() -> None:
@@ -575,7 +576,7 @@ def test_format_skills_list_multiple_skills_multiple_registries() -> None:
         },
     ]
 
-    result = middleware._format_skills_list(skills)
+    result = middleware._format_skills_list(skills, [], {})
 
     # Check that all skills are present
     assert "skill-a" in result
