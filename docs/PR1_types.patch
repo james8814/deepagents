@@ -1,0 +1,78 @@
+--- a/libs/deepagents/deepagents/middleware/skills.py
++++ b/libs/deepagents/deepagents/middleware/skills.py
+@@ -10,7 +10,8 @@ from pathlib import PurePosixPath
+ from typing import TYPE_CHECKING, Annotated
+ 
+ import yaml
+-from langchain.agents.middleware.types import PrivateStateAttr
++from langchain.agents.middleware.types import AgentMiddleware, AgentState, ModelRequest, ModelResponse, PrivateStateAttr
++from langchain.tools import BaseTool
+ 
+ if TYPE_CHECKING:
+     from deepagents.backends.protocol import BACKEND_TYPES, BackendProtocol
+@@ -19,6 +20,8 @@ if TYPE_CHECKING:
+ from collections.abc import Awaitable, Callable
+ from typing import Literal, NotRequired, TypedDict
+ 
++from langgraph.types import Command
++
+ from langchain.agents.middleware.types import (
+     AgentMiddleware,
+     AgentState,
+@@ -26,6 +29,7 @@ from langchain.agents.middleware.types import (
+     ModelResponse,
+ )
+ from langchain_core.runnables import RunnableConfig
++from langchain_core.messages import ToolMessage
+ from langgraph.prebuilt import ToolRuntime
+ from langgraph.runtime import Runtime
+ 
+@@ -50,6 +54,45 @@ MAX_SKILL_DESCRIPTION_LENGTH = 1024
+ 
+ # V2: Resource type mapping for standard skill resource directories
+ RESOURCE_TYPE_MAP: dict[str, Literal["script", "reference", "asset"]] = {
++    "scripts": "script",
++    "references": "reference",
++    "assets": "asset",
++}
++
++
++class ResourceMetadata(TypedDict):
++    """技能资源文件的元数据。用于延迟发现策略，缓存技能目录下的资源文件信息。"""
++    path: str
++    """资源文件在 backend 中的完整路径。"""
++    type: Literal["script", "reference", "asset", "other"]
++    """资源类型，基于所在目录名推断。"""
++    skill_name: str
++    """所属技能的名称。"""
++
++
++class SkillsState(AgentState):
++    """State for the skills middleware."""
++
++    skills_metadata: NotRequired[Annotated[list[SkillMetadata], PrivateStateAttr]]
++    """List of loaded skill metadata from configured sources. Not propagated to parent agents."""
++
++    # V2: Track which skills have been loaded (activated) by the agent
++    skills_loaded: NotRequired[Annotated[list[str], PrivateStateAttr]]
++    """已加载（激活）的技能名称列表。"""
++
++    # V2: Cache discovered skill resources for loaded skills
++    skill_resources: NotRequired[Annotated[dict[str, list[ResourceMetadata]], PrivateStateAttr]]
++    """已发现的技能资源映射，键为技能名称。"""
++
++
++class SkillsStateUpdate(TypedDict):
++    """State update for the skills middleware."""
++
++    skills_metadata: list[SkillMetadata]
++    """List of loaded skill metadata to merge into state."""
++    # V2 fields
++    skills_loaded: list[str]
++    """List of loaded skill names."""
++    skill_resources: dict[str, list[ResourceMetadata]]
++    """Discovered skill resources cache."""
++
+ 
+ class SkillMetadata(TypedDict):
+     """Metadata for a skill per Agent Skills specification (https://agentskills.io/specification)."""

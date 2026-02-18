@@ -1,0 +1,106 @@
+--- a/libs/deepagents/deepagents/middleware/skills.py
++++ b/libs/deepagents/deepagents/middleware/skills.py
+@@ -67,6 +67,103 @@ class ResourceMetadata(TypedDict):
+     skill_name: str
+     """所属技能的名称。"""
+ 
++# =============================================================================
++# V2: Lazy resource discovery functions
++# =============================================================================
++
++
++def _discover_resources(
++    backend: "BackendProtocol",
++    skill_dir: str,
++    skill_name: str,
++) -> list["ResourceMetadata"]:
++    """发现技能目录下的资源文件（同步版本）。扫描标准资源目录（仅第一层）。"""
++    resources: list["ResourceMetadata"] = []
++
++    try:
++        items = backend.ls_info(skill_dir)
++    except Exception:
++        logger.warning("Failed to list resources for skill '%s' at %s", skill_name, skill_dir)
++        return resources
++
++    for item in items:
++        item_path = item["path"]
++        item_name = PurePosixPath(item_path).name
++
++        if item.get("is_dir"):
++            resource_type = RESOURCE_TYPE_MAP.get(item_name)
++            if resource_type is None:
++                continue
++            try:
++                sub_items = backend.ls_info(item_path)
++            except Exception:
++                logger.warning("Failed to list resources in %s", item_path)
++                continue
++            for sub_item in sub_items:
++                if not sub_item.get("is_dir"):
++                    resources.append({"path": sub_item["path"], "type": resource_type, "skill_name": skill_name})
++        else:
++            if item_name != "SKILL.md":
++                resources.append({"path": item_path, "type": "other", "skill_name": skill_name})
++
++    return resources
++
++
++async def _adiscover_resources(
++    backend: "BackendProtocol",
++    skill_dir: str,
++    skill_name: str,
++) -> list["ResourceMetadata"]:
++    """发现技能目录下的资源文件（异步版本）。"""
++    resources: list["ResourceMetadata"] = []
++
++    try:
++        items = await backend.als_info(skill_dir)
++    except Exception:
++        logger.warning("Failed to list resources for skill '%s' at %s", skill_name, skill_dir)
++        return resources
++
++    for item in items:
++        item_path = item["path"]
++        item_name = PurePosixPath(item_path).name
++
++        if item.get("is_dir"):
++            resource_type = RESOURCE_TYPE_MAP.get(item_name)
++            if resource_type is None:
++                continue
++            try:
++                sub_items = await backend.als_info(item_path)
++            except Exception:
++                logger.warning("Failed to list resources in %s", item_path)
++                continue
++            for sub_item in sub_items:
++                if not sub_item.get("is_dir"):
++                    resources.append({"path": sub_item["path"], "type": resource_type, "skill_name": skill_name})
++        else:
++            if item_name != "SKILL.md":
++                resources.append({"path": item_path, "type": "other", "skill_name": skill_name})
++
++    return resources
++
++
++def _format_resource_summary(resources: list["ResourceMetadata"]) -> str:
++    """格式化资源摘要，按类型分组。"""
++    by_type: dict[str, int] = {}
++    for r in resources:
++        by_type[r["type"]] = by_type.get(r["type"], 0) + 1
++    parts = [f"{count} {rtype}{'s' if count > 1 else ''}" for rtype, count in sorted(by_type.items())]
++    return ", ".join(parts)
++
++
++def _format_skill_annotations(skill: "SkillMetadata") -> str:
++    """Format optional skill annotations (license, compatibility)."""
++    annotations = []
++    if skill.get("license"):
++        annotations.append(f"License: {skill['license']}")
++    if skill.get("compatibility"):
++        annotations.append(f"Compatibility: {skill['compatibility']}")
++    return "; ".join(annotations) if annotations else ""
++
+ 
+ class SkillsState(AgentState):
+     """State for the skills middleware."""
