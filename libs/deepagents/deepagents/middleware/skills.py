@@ -925,8 +925,9 @@ class SkillsMiddleware(AgentMiddleware):
     def before_agent(self, state: SkillsState, runtime: Runtime, config: RunnableConfig) -> SkillsStateUpdate | None:
         """Load skills metadata before agent execution (synchronous).
 
-        Runs before each agent interaction to discover available skills from all
-        configured sources. Re-loads on every call to capture any changes.
+        Loads skills once per session from all configured sources. If
+        `skills_metadata` is already present in state (from a prior turn or
+        checkpointed session), the load is skipped and `None` is returned.
 
         Skills are loaded in source order with later sources overriding
         earlier ones if they contain skills with the same name (last one wins).
@@ -937,7 +938,7 @@ class SkillsMiddleware(AgentMiddleware):
             config: Runnable config.
 
         Returns:
-            State update with `skills_metadata` populated, or `None` if already present
+            State update with `skills_metadata` populated, or `None` if already present.
         """
         # Skip if skills_metadata is already present in state (even if empty)
         if "skills_metadata" in state:
@@ -964,8 +965,9 @@ class SkillsMiddleware(AgentMiddleware):
     async def abefore_agent(self, state: SkillsState, runtime: Runtime, config: RunnableConfig) -> SkillsStateUpdate | None:
         """Load skills metadata before agent execution (async).
 
-        Runs before each agent interaction to discover available skills from all
-        configured sources. Re-loads on every call to capture any changes.
+        Loads skills once per session from all configured sources. If
+        `skills_metadata` is already present in state (from a prior turn or
+        checkpointed session), the load is skipped and `None` is returned.
 
         Skills are loaded in source order with later sources overriding
         earlier ones if they contain skills with the same name (last one wins).
@@ -976,7 +978,7 @@ class SkillsMiddleware(AgentMiddleware):
             config: Runnable config.
 
         Returns:
-            State update with `skills_metadata` populated, or `None` if already present
+            State update with `skills_metadata` populated, or `None` if already present.
         """
         # Skip if skills_metadata is already present in state (even if empty)
         if "skills_metadata" in state:
