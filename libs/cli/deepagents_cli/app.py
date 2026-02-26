@@ -35,6 +35,7 @@ from deepagents_cli.widgets.messages import (
 )
 from deepagents_cli.widgets.status import StatusBar
 from deepagents_cli.widgets.welcome import WelcomeBanner
+from deepagents_cli.utils.security import validate_file_type, SecurityError, ValidationError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -730,6 +731,70 @@ class DeepAgentsApp(App):
                 )
             except Exception:
                 await self._mount_message(AppMessage("deepagents version: unknown"))
+        elif cmd.startswith("/upload"):
+            # Usage: /upload <path>
+            args = command.strip().split(" ", 1)
+            if len(args) < 2:
+                await self._mount_message(UserMessage(command))
+                await self._mount_message(ErrorMessage("Usage: /upload <path>"))
+                return
+
+            file_path_str = args[1].strip()
+            # Handle quoted paths if user drags & drops
+            if (file_path_str.startswith('"') and file_path_str.endswith('"')) or \
+               (file_path_str.startswith("'") and file_path_str.endswith("'")):
+                file_path_str = file_path_str[1:-1]
+
+            await self._mount_message(UserMessage(f"/upload {file_path_str}"))
+
+            try:
+                source_path = Path(file_path_str)
+                # 1. Security & Validation
+                await asyncio.to_thread(validate_file_type, source_path)
+
+                # 2. Upload to backend
+                if not self._backend:
+                    await self._mount_message(ErrorMessage("Backend not initialized"))
+                    return
+
+                # Read file content
+                content = await asyncio.to_thread(source_path.read_bytes)
+
+                # Target path in virtual filesystem
+                target_filename = source_path.name
+                target_path = f"/uploads/{target_filename}"
+
+                # Upload
+                # We use upload_files which takes list of (path, content)
+                # BackendProtocol.upload_files is synchronous, wrap in thread if needed
+                # But we can check if it has aupload_files
+                if hasattr(self._backend, "aupload_files"):
+                    responses = await self._backend.aupload_files([(target_path, content)])
+                else:
+                    responses = await asyncio.to_thread(
+                        self._backend.upload_files, [(target_path, content)]
+                    )
+
+                response = responses[0]
+                if response.error:
+                    await self._mount_message(ErrorMessage(f"Upload failed: {response.error}"))
+                else:
+                    # Success
+                    # Check middleware response if available (e.g. from AttachmentMiddleware)
+                    # For now, just show success message.
+                    # The middleware will handle injection asynchronously/on next prompt.
+
+                    # We might want to trigger a middleware update explicitly if possible,
+                    # but typically middleware reacts to agent steps or state changes.
+                    # Here we are just uploading to FS.
+
+                    await self._mount_message(AppMessage(f"Uploaded {target_filename} to /uploads/"))
+
+            except (ValidationError, SecurityError) as e:
+                await self._mount_message(ErrorMessage(str(e)))
+            except Exception as e:
+                await self._mount_message(ErrorMessage(f"Error uploading file: {e}"))
+
         elif cmd == "/clear":
             await self._clear_messages()
             if self._token_tracker:

@@ -20,6 +20,7 @@ from langgraph.types import Checkpointer
 
 from deepagents.backends import StateBackend
 from deepagents.backends.protocol import BackendFactory, BackendProtocol
+from deepagents.middleware.attachment import AttachmentMiddleware
 from deepagents.middleware.filesystem import FilesystemMiddleware
 from deepagents.middleware.memory import MemoryMiddleware
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
@@ -160,6 +161,7 @@ def create_deep_agent(
     gp_middleware: list[AgentMiddleware] = [
         TodoListMiddleware(),
         FilesystemMiddleware(backend=backend),
+        AttachmentMiddleware(backend=backend),
         SummarizationMiddleware(
             model=model,
             backend=backend,
@@ -201,6 +203,7 @@ def create_deep_agent(
             subagent_middleware: list[AgentMiddleware] = [
                 TodoListMiddleware(),
                 FilesystemMiddleware(backend=backend),
+                AttachmentMiddleware(backend=backend),
                 SummarizationMiddleware(
                     model=subagent_model,
                     backend=backend,
@@ -240,6 +243,7 @@ def create_deep_agent(
     deepagent_middleware.extend(
         [
             FilesystemMiddleware(backend=backend),
+            AttachmentMiddleware(backend=backend),
             SubAgentMiddleware(
                 backend=backend,
                 subagents=all_subagents,
