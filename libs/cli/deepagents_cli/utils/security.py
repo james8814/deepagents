@@ -91,7 +91,7 @@ def validate_file_type(path: str | Path) -> None:
 
             raise SecurityError(f"Unauthorized file type: {mime}")
 
-    except puremagic.PureMagicError:
+    except puremagic.PureError:
         # If magic check fails, try text check
         if _is_text_file(file_path):
             return

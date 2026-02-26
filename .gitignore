@@ -226,3 +226,24 @@ CLAUDE.md
 
 # MCP config (contains API keys)
 .mcp.json
+
+# Temporary test and debug scripts
+check_*.py
+test_*.py
+debug_*.py
+hello*.py
+inspect_*.py
+find_*.py
+comprehensive_test.py
+run_attachment_tests.py
+subprocess_test.py
+
+# Test output files
+test_output.txt
+*_inspection_result.txt
+
+# Python version files (local environment)
+.python-version
+
+# Documentation drafts (may contain sensitive info)
+docs/design_review_report_*.md
