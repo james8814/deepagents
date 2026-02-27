@@ -750,7 +750,7 @@ class DeepAgentsApp(App):
             try:
                 source_path = Path(file_path_str)
                 # 1. Security & Validation
-                await asyncio.to_thread(validate_file_type, source_path)
+                mime_type = await asyncio.to_thread(validate_file_type, source_path)
 
                 # 2. Upload to backend
                 if not self._backend:
@@ -779,16 +779,51 @@ class DeepAgentsApp(App):
                 if response.error:
                     await self._mount_message(ErrorMessage(f"Upload failed: {response.error}"))
                 else:
-                    # Success
-                    # Check middleware response if available (e.g. from AttachmentMiddleware)
-                    # For now, just show success message.
-                    # The middleware will handle injection asynchronously/on next prompt.
+                    # Success - Provide feedback based on file type
+                    file_size = len(content)
+                    status_text = f"✓ {target_filename} uploaded ({file_size / 1024:.1f}KB)"
 
-                    # We might want to trigger a middleware update explicitly if possible,
-                    # but typically middleware reacts to agent steps or state changes.
-                    # Here we are just uploading to FS.
+                    # Provide type-specific guidance
+                    base_path = f"/uploads/{target_filename}"
+                    if mime_type.startswith(("image/", "audio/", "video/")):
+                        details = (
+                            f"   File available at {base_path}. "
+                            "Note: Binary files cannot be read directly. "
+                            "Use `execute` with external tools to process."
+                        )
+                    elif mime_type == "application/pdf":
+                        details = (
+                            f"   File available at {base_path}. "
+                            "Note: PDFs cannot be read directly. "
+                            "Use `execute` with `pdftotext` or similar tools."
+                        )
+                    elif mime_type in ("application/zip", "application/x-tar", "application/gzip"):
+                        details = (
+                            f"   File available at {base_path}. "
+                            "Use `execute` with `unzip`, `tar`, etc. "
+                            "to extract and access contents."
+                        )
+                    elif mime_type in (
+                        "application/msword",
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        "application/vnd.ms-excel",
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        "application/vnd.ms-powerpoint",
+                        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                    ):
+                        details = (
+                            f"   File available at {base_path}. "
+                            "Note: Office documents cannot be read directly. "
+                            "Use `execute` with `pandoc` to extract text."
+                        )
+                    else:
+                        details = (
+                            f"   File available at {base_path}. "
+                            "Use `ls /uploads` and `read_file` to access."
+                        )
 
-                    await self._mount_message(AppMessage(f"Uploaded {target_filename} to /uploads/"))
+                    await self._mount_message(AppMessage(status_text))
+                    await self._mount_message(AppMessage(details))
 
             except (ValidationError, SecurityError) as e:
                 await self._mount_message(ErrorMessage(str(e)))

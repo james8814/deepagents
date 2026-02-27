@@ -54,11 +54,14 @@ class ValidationError(Exception):
     """Raised when a validation fails."""
     pass
 
-def validate_file_type(path: str | Path) -> None:
+def validate_file_type(path: str | Path) -> str:
     """Validate a file's type and size for secure upload.
 
     Args:
         path: Path to the file to validate.
+
+    Returns:
+        The detected MIME type of the file.
 
     Raises:
         ValidationError: If file is too large or doesn't exist.
@@ -87,14 +90,16 @@ def validate_file_type(path: str | Path) -> None:
             # Fallback for text files that might be identified as 'application/octet-stream' or unknown
             # Attempt to read as text to verify
             if _is_text_file(file_path):
-                return
+                return "text/plain"
 
             raise SecurityError(f"Unauthorized file type: {mime}")
+
+        return mime
 
     except puremagic.PureError:
         # If magic check fails, try text check
         if _is_text_file(file_path):
-            return
+            return "text/plain"
         raise SecurityError("Unknown file format")
 
 def _is_text_file(path: Path) -> bool:
