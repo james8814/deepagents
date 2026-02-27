@@ -492,6 +492,13 @@ The project uses `release-please` for automated releases:
 - Use `textual.pilot` for async UI testing
 - Snapshot testing available for visual regression
 
+**File Upload Command**:
+The CLI provides a `/upload <path>` command for uploading files:
+- Files are validated for type and size (max 100MB)
+- Allowed types: text, code, JSON, PDF, images, archives, Office documents
+- Files are stored in the backend at `/uploads/<filename>`
+- After upload, type-specific guidance is displayed (e.g., use `pdftotext` for PDFs)
+
 ### Deep Agents ACP
 
 The ACP (Agent Client Protocol) package provides integration with editors like Zed.
