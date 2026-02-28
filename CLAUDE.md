@@ -289,7 +289,7 @@ Scopes: `deepagents`, `sdk`, `deepagents-cli`, `cli`, `harbor`, `acp`, `examples
 
 **Backend Download vs Read**: Use `download_files()` for raw content (editing), `read()` returns line-numbered format (for LLM consumption).
 
-**StateBackend Limitations**: Does not support `upload_files()` - pass files directly via `invoke(files={...})`.
+**StateBackend Uploads**: Use `upload_files()` from `deepagents.upload_adapter` for universal file upload support.
 
 **Thread ID Extraction**: Summarization extracts `thread_id` from LangGraph config, falls back to generated session ID.
 
@@ -298,6 +298,13 @@ Scopes: `deepagents`, `sdk`, `deepagents-cli`, `cli`, `harbor`, `acp`, `examples
 - Design document: `docs/skillsmiddleware_docs/DeepAgents_SkillsMiddleware_V2_升级设计方案_final.md`
 - Key changes: `libs/deepagents/deepagents/middleware/skills.py` (+442 lines)
 - CLI compatibility: Fully backward compatible, no changes required
+
+**Upload Adapter V5.0** (2026-02-27):
+- Location: `libs/deepagents/deepagents/upload_adapter.py`
+- Purpose: Universal file upload for any backend
+- Features: Auto strategy selection, overwrite detection, WeakKeyDictionary locks
+- Export: `from deepagents import upload_files, UploadResult`
+- Guide: `docs/UPLOAD_ADAPTER_GUIDE.md`
 
 ## Key Links
 
@@ -311,3 +318,8 @@ Scopes: `deepagents`, `sdk`, `deepagents-cli`, `cli`, `harbor`, `acp`, `examples
 - **V2 Verification Report**: `docs/skillsmiddleware_docs/SkillsMiddleware_V2_核查报告.md`
 - **Phase 3 Code Review**: `docs/skillsmiddleware_docs/Phase3_CodeReview_Report.md`
 - **SDK Upgrade Guide**: `docs/SDK_UPGRADE_GUIDE.md`
+
+**V5.0 Upload Adapter Documentation**:
+- **User Guide**: `docs/UPLOAD_ADAPTER_GUIDE.md`
+- **Implementation**: `docs/attachment_function_docs/UNIVERSAL_UPLOAD_ADAPTER_V5.md`
+- **Final Report**: `docs/attachment_function_docs/FINAL_DELIVERY_REPORT.md`
