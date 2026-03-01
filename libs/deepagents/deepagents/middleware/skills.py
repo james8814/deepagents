@@ -426,17 +426,30 @@ def _parse_skill_metadata(
         )
         description_str = description_str[:MAX_SKILL_DESCRIPTION_LENGTH]
 
-    if frontmatter_data.get("allowed-tools"):
-        allowed_tools = frontmatter_data.get("allowed-tools").split(" ")
+    # Handle allowed-tools: can be a list or a space-separated string
+    allowed_tools_raw = frontmatter_data.get("allowed-tools")
+    if allowed_tools_raw:
+        if isinstance(allowed_tools_raw, list):
+            allowed_tools = [str(t) for t in allowed_tools_raw]
+        else:
+            # Split by whitespace and filter out empty strings
+            allowed_tools = [t for t in str(allowed_tools_raw).split(" ") if t]
     else:
         allowed_tools = []
+
+    # Handle license: ensure it's a string before calling strip()
+    license_raw = frontmatter_data.get("license", "")
+    if isinstance(license_raw, bool):
+        license_str = None
+    else:
+        license_str = str(license_raw).strip() or None
 
     return SkillMetadata(
         name=str(name),
         description=description_str,
         path=skill_path,
         metadata=_validate_metadata(frontmatter_data.get("metadata", {}), skill_path),
-        license=frontmatter_data.get("license", "").strip() or None,
+        license=license_str,
         compatibility=frontmatter_data.get("compatibility", "").strip() or None,
         allowed_tools=allowed_tools,
     )
