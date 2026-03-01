@@ -128,6 +128,7 @@ MAX_SKILL_FILE_SIZE = 10 * 1024 * 1024
 # Agent Skills specification constraints (https://agentskills.io/specification)
 MAX_SKILL_NAME_LENGTH = 64
 MAX_SKILL_DESCRIPTION_LENGTH = 1024
+MAX_SKILL_COMPATIBILITY_LENGTH = 500
 
 # V2: Resource type mapping for standard skill resource directories
 RESOURCE_TYPE_MAP: dict[str, Literal["script", "reference", "asset"]] = {
@@ -244,6 +245,33 @@ def _format_skill_annotations(skill: "SkillMetadata") -> str:
         annotations.append(f"Compatibility: {skill['compatibility']}")
     return "; ".join(annotations) if annotations else ""
 
+
+def _validate_metadata(
+    raw: object,
+    skill_path: str,
+) -> dict[str, str]:
+    """Validate and normalize the metadata field from YAML frontmatter.
+
+    YAML `safe_load` can return any type for the `metadata` key. This
+    ensures the values in `SkillMetadata` are always a `dict[str, str]` by
+    coercing via `str()` and rejecting non-dict inputs.
+
+    Args:
+        raw: Raw value from `frontmatter_data.get("metadata", {})`.
+        skill_path: Path to the `SKILL.md` file (for warning messages).
+
+    Returns:
+        A validated `dict[str, str]`.
+    """
+    if not isinstance(raw, dict):
+        if raw:
+            logger.warning(
+                "Ignoring non-dict metadata in %s (got %s)",
+                skill_path,
+                type(raw).__name__,
+            )
+        return {}
+    return {str(k): str(v) for k, v in raw.items()}
 
 
 class SkillMetadata(TypedDict):
@@ -407,7 +435,7 @@ def _parse_skill_metadata(
         name=str(name),
         description=description_str,
         path=skill_path,
-        metadata=frontmatter_data.get("metadata", {}),
+        metadata=_validate_metadata(frontmatter_data.get("metadata", {}), skill_path),
         license=frontmatter_data.get("license", "").strip() or None,
         compatibility=frontmatter_data.get("compatibility", "").strip() or None,
         allowed_tools=allowed_tools,
