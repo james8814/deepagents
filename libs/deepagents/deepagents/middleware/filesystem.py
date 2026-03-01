@@ -1,10 +1,17 @@
 """Middleware for providing filesystem tools to an agent."""
 # ruff: noqa: E501
 
+import asyncio
+import logging
 import os
 import re
 from collections.abc import Awaitable, Callable, Sequence
+from pathlib import Path
 from typing import Annotated, Literal, NotRequired
+
+from typing_extensions import TypedDict
+
+logger = logging.getLogger(__name__)
 
 from langchain.agents.middleware.types import (
     AgentMiddleware,
@@ -35,6 +42,7 @@ from deepagents.backends.utils import (
     truncate_if_too_long,
 )
 from deepagents.middleware._utils import append_to_system_message
+from deepagents.middleware.converters import detect_mime_type, get_default_registry
 
 EMPTY_CONTENT_WARNING = "System reminder: File exists but has empty contents"
 LINE_NUMBER_WIDTH = 6
@@ -55,6 +63,37 @@ READ_FILE_TRUNCATION_MSG = (
 # Using 4 chars per token as a conservative approximation (actual ratio varies by content)
 # This errs on the high side to avoid premature eviction of content that might fit
 NUM_CHARS_PER_TOKEN = 4
+
+
+def is_text_mime_type(mime_type: str) -> bool:
+    """Check if a MIME type represents text content.
+
+    Args:
+        mime_type: MIME type string.
+
+    Returns:
+        True if the content can be read as text, False for binary.
+    """
+    if not mime_type:
+        return False
+
+    # Text types
+    text_prefixes = ("text/", "application/json", "application/xml", "application/x-yaml")
+    if any(mime_type.startswith(p) for p in text_prefixes):
+        return True
+
+    # Code types (text/x-*)
+    if mime_type.startswith("text/x-"):
+        return True
+
+    # Known text-based application types
+    text_application_types = {
+        "application/javascript",
+        "application/typescript",
+        "application/x-sh",
+        "application/x-shellscript",
+    }
+    return mime_type in text_application_types
 
 
 class FileData(TypedDict):
@@ -177,6 +216,12 @@ You should almost ALWAYS use this tool before using the read_file or edit_file t
 
 READ_FILE_TOOL_DESCRIPTION = """Reads a file from the filesystem.
 
+This tool supports multiple file formats with automatic conversion:
+- **Text files**: TXT, MD, JSON, CSV, XML, HTML, code files (direct read)
+- **PDF documents**: Automatically converted to Markdown with table extraction
+- **Office documents**: DOCX, PPTX, XLSX automatically converted to Markdown
+- **Images**: Returns metadata placeholder (path, dimensions, size)
+
 Assume this tool is able to read all files. If the User provides a path to a file assume that path is valid. It is okay to read a file that does not exist; an error will be returned.
 
 Usage:
@@ -186,11 +231,24 @@ Usage:
   - Read more sections: read_file(path, offset=100, limit=200) for next 200 lines
   - Only omit limit (read full file) when necessary for editing
 - Specify offset and limit: read_file(path, offset=0, limit=100) reads first 100 lines
+- **For PDF/PPTX**: Use page parameter for pagination
+  - Read specific page: read_file(path, page=5) reads page 5 only
+  - Read all pages: read_file(path) reads entire document
 - Results are returned using cat -n format, with line numbers starting at 1
 - Lines longer than 5,000 characters will be split into multiple lines with continuation markers (e.g., 5.1, 5.2, etc.). When you specify a limit, these continuation lines count towards the limit.
 - You have the capability to call multiple tools in a single response. It is always better to speculatively read multiple files as a batch that are potentially useful.
 - If you read a file that exists but has empty contents you will receive a system reminder warning in place of file contents.
-- You should ALWAYS make sure a file has been read before editing it."""
+- You should ALWAYS make sure a file has been read before editing it.
+
+Examples:
+```
+read_file("/uploads/report.txt")           # Read text file
+read_file("/uploads/report.pdf")           # Read PDF (auto-convert)
+read_file("/uploads/report.docx")          # Read Word (auto-convert)
+read_file("/uploads/large.pdf", page=5)    # Read specific PDF page
+read_file("/uploads/data.csv", limit=50)   # Read first 50 lines
+read_file("/uploads/data.json", offset=100, limit=50)  # Read lines 100-150
+```"""
 
 EDIT_FILE_TOOL_DESCRIPTION = """Performs exact string replacements in files.
 
@@ -526,32 +584,115 @@ class FilesystemMiddleware(AgentMiddleware):
         )
 
     def _create_read_file_tool(self) -> BaseTool:
-        """Create the read_file tool."""
+        """Create the read_file tool with unified file format support.
+
+        This tool supports multiple file formats:
+        - Text files: TXT, MD, JSON, CSV, XML, HTML, code files (direct read)
+        - PDF documents: Automatically converted to Markdown with table extraction
+        - Office documents: DOCX, PPTX, XLSX automatically converted to Markdown
+        - Images: Returns placeholder with metadata
+        """
         tool_description = self._custom_tool_descriptions.get("read_file") or READ_FILE_TOOL_DESCRIPTION
         token_limit = self._tool_token_limit_before_evict
+        converter_registry = get_default_registry()
 
         def sync_read_file(
             file_path: Annotated[str, "Absolute path to the file to read. Must be absolute, not relative."],
             runtime: ToolRuntime[None, FilesystemState],
             offset: Annotated[int, "Line number to start reading from (0-indexed). Use for pagination of large files."] = DEFAULT_READ_OFFSET,
             limit: Annotated[int, "Maximum number of lines to read. Use for pagination of large files."] = DEFAULT_READ_LIMIT,
+            page: Annotated[int | None, "Page number for paginated documents (PDF, PPTX). 1-indexed. None means read all pages."] = None,
         ) -> str:
-            """Synchronous wrapper for read_file tool."""
+            """Synchronous wrapper for read_file tool with format conversion."""
             resolved_backend = self._get_backend(runtime)
             try:
                 validated_path = _validate_path(file_path)
             except ValueError as e:
                 return f"Error: {e}"
-            result = resolved_backend.read(validated_path, offset=offset, limit=limit)
 
-            lines = result.splitlines(keepends=True)
-            if len(lines) > limit:
-                lines = lines[:limit]
+            # Check if path points to a directory
+            infos = resolved_backend.ls_info(validated_path)
+            if infos and len(infos) == 1 and infos[0].get("is_dir", False):
+                return f"Error: {validated_path} is a directory. Use ls to list its contents."
+
+            # Try to detect MIME type from extension first
+            path_obj = Path(validated_path)
+            ext = path_obj.suffix.lower()
+
+            # Get converter for this file type
+            # First try to get raw content from backend for MIME detection
+            try:
+                raw_result = resolved_backend.read(validated_path, offset=0, limit=10)
+            except Exception:
+                raw_result = ""
+
+            # Detect MIME type
+            mime_type = detect_mime_type(validated_path, raw_result.encode() if raw_result else None)
+            logger.debug(f"Detected MIME type: {validated_path} -> {mime_type}")
+
+            # Get converter
+            converter = converter_registry.get(mime_type)
+
+            if converter is not None and not is_text_mime_type(mime_type):
+                # Binary file that needs conversion
+                logger.info(f"Using converter for {mime_type}: {validated_path}")
+
+                # For binary files, we need to get raw bytes
+                # Check if backend supports download_files
+                raw_bytes = None
+                if hasattr(resolved_backend, 'download_files'):
+                    import tempfile
+                    with tempfile.TemporaryDirectory() as temp_dir:
+                        try:
+                            download_result = resolved_backend.download_files([validated_path], temp_dir)
+                            if download_result:
+                                local_path = Path(temp_dir) / validated_path.lstrip("/")
+                                if local_path.exists():
+                                    raw_bytes = local_path.read_bytes()
+                        except Exception as e:
+                            logger.debug(f"download_files failed: {e}")
+
+                # Try conversion
+                try:
+                    if page is not None and converter.supports_pagination():
+                        content = converter.convert_page(path_obj, page, raw_bytes)
+                    else:
+                        content = converter.convert(path_obj, raw_bytes)
+                except Exception as e:
+                    logger.warning(f"Conversion failed for {validated_path}: {e}")
+                    # Fallback to raw result
+                    content = raw_result or f"(Unable to read file: {e})"
+
+                # Apply pagination to converted content
+                lines = content.splitlines(keepends=True)
+
+                # For converted content, apply offset/limit
+                if offset > 0 or limit < len(lines):
+                    truncated_lines = lines[offset:offset + limit]
+                    if len(lines) > offset + limit:
+                        truncated_lines.append(
+                            f"\n[... Content truncated. Total {len(lines)} lines, showing lines {offset}-{offset + limit} ...]"
+                        )
+                    lines = truncated_lines
+
                 result = "".join(lines)
+            else:
+                # Text file or no converter - use backend directly
+                # Backend applies offset/limit, but we need to enforce limit on formatted lines
+                # (continuation markers can cause more lines than expected)
+                if page is not None:
+                    return f"Error: The 'page' parameter is only supported for PDF and PPTX files. This file type ({mime_type}) does not support pagination."
+
+                result = resolved_backend.read(validated_path, offset=offset, limit=limit)
+
+                # Enforce limit on formatted output lines (handles continuation markers)
+                lines = result.splitlines(keepends=True)
+                if len(lines) > limit:
+                    lines = lines[:limit]
+                    result = "".join(lines)
 
             # Check if result exceeds token threshold and truncate if necessary
             if token_limit and len(result) >= NUM_CHARS_PER_TOKEN * token_limit:
-                # Calculate truncation message length to ensure final result stays under threshold
                 truncation_msg = READ_FILE_TRUNCATION_MSG.format(file_path=validated_path)
                 max_content_length = NUM_CHARS_PER_TOKEN * token_limit - len(truncation_msg)
                 result = result[:max_content_length]
@@ -564,23 +705,97 @@ class FilesystemMiddleware(AgentMiddleware):
             runtime: ToolRuntime[None, FilesystemState],
             offset: Annotated[int, "Line number to start reading from (0-indexed). Use for pagination of large files."] = DEFAULT_READ_OFFSET,
             limit: Annotated[int, "Maximum number of lines to read. Use for pagination of large files."] = DEFAULT_READ_LIMIT,
+            page: Annotated[int | None, "Page number for paginated documents (PDF, PPTX). 1-indexed. None means read all pages."] = None,
         ) -> str:
-            """Asynchronous wrapper for read_file tool."""
+            """Asynchronous wrapper for read_file tool with format conversion."""
             resolved_backend = self._get_backend(runtime)
             try:
                 validated_path = _validate_path(file_path)
             except ValueError as e:
                 return f"Error: {e}"
-            result = await resolved_backend.aread(validated_path, offset=offset, limit=limit)
 
-            lines = result.splitlines(keepends=True)
-            if len(lines) > limit:
-                lines = lines[:limit]
+            # Check if path points to a directory
+            infos = await resolved_backend.als_info(validated_path)
+            if infos and len(infos) == 1 and infos[0].get("is_dir", False):
+                return f"Error: {validated_path} is a directory. Use ls to list its contents."
+
+            # Try to detect MIME type from extension first
+            path_obj = Path(validated_path)
+            ext = path_obj.suffix.lower()
+
+            # Get converter for this file type
+            # First try to get raw content from backend for MIME detection
+            try:
+                raw_result = await resolved_backend.aread(validated_path, offset=0, limit=10)
+            except Exception:
+                raw_result = ""
+
+            # Detect MIME type
+            mime_type = detect_mime_type(validated_path, raw_result.encode() if raw_result else None)
+            logger.debug(f"Detected MIME type: {validated_path} -> {mime_type}")
+
+            # Get converter
+            converter = converter_registry.get(mime_type)
+
+            if converter is not None and not is_text_mime_type(mime_type):
+                # Binary file that needs conversion
+                logger.info(f"Using converter for {mime_type}: {validated_path}")
+
+                # For binary files, we need to get raw bytes
+                raw_bytes = None
+                if hasattr(resolved_backend, 'download_files'):
+                    import tempfile
+                    with tempfile.TemporaryDirectory() as temp_dir:
+                        try:
+                            download_result = await resolved_backend.adownload_files([validated_path], temp_dir)
+                            if download_result:
+                                local_path = Path(temp_dir) / validated_path.lstrip("/")
+                                if local_path.exists():
+                                    raw_bytes = local_path.read_bytes()
+                        except Exception as e:
+                            logger.debug(f"download_files failed: {e}")
+
+                # Try conversion in thread pool to avoid blocking
+                try:
+                    if page is not None and converter.supports_pagination():
+                        content = await asyncio.to_thread(converter.convert_page, path_obj, page, raw_bytes)
+                    else:
+                        content = await asyncio.to_thread(converter.convert, path_obj, raw_bytes)
+                except Exception as e:
+                    logger.warning(f"Conversion failed for {validated_path}: {e}")
+                    # Fallback to raw result
+                    content = raw_result or f"(Unable to read file: {e})"
+
+                # Apply pagination to converted content
+                lines = content.splitlines(keepends=True)
+
+                # For converted content, apply offset/limit
+                if offset > 0 or limit < len(lines):
+                    truncated_lines = lines[offset:offset + limit]
+                    if len(lines) > offset + limit:
+                        truncated_lines.append(
+                            f"\n[... Content truncated. Total {len(lines)} lines, showing lines {offset}-{offset + limit} ...]"
+                        )
+                    lines = truncated_lines
+
                 result = "".join(lines)
+            else:
+                # Text file or no converter - use backend directly
+                # Backend applies offset/limit, but we need to enforce limit on formatted lines
+                # (continuation markers can cause more lines than expected)
+                if page is not None:
+                    return f"Error: The 'page' parameter is only supported for PDF and PPTX files. This file type ({mime_type}) does not support pagination."
+
+                result = await resolved_backend.aread(validated_path, offset=offset, limit=limit)
+
+                # Enforce limit on formatted output lines (handles continuation markers)
+                lines = result.splitlines(keepends=True)
+                if len(lines) > limit:
+                    lines = lines[:limit]
+                    result = "".join(lines)
 
             # Check if result exceeds token threshold and truncate if necessary
             if token_limit and len(result) >= NUM_CHARS_PER_TOKEN * token_limit:
-                # Calculate truncation message length to ensure final result stays under threshold
                 truncation_msg = READ_FILE_TRUNCATION_MSG.format(file_path=validated_path)
                 max_content_length = NUM_CHARS_PER_TOKEN * token_limit - len(truncation_msg)
                 result = result[:max_content_length]

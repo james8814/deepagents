@@ -27,6 +27,7 @@ Deep Agents is an agent harness.  An opinionated, ready-to-run agent out of the 
 
 - **Planning** — `write_todos` / `read_todos` for task breakdown and progress tracking
 - **Filesystem** — `read_file`, `write_file`, `edit_file`, `ls`, `glob`, `grep` for reading and writing context
+- **Universal File Reader** — Read PDF, Word, Excel, PowerPoint, and more with automatic format conversion
 - **Shell access** — `execute` for running commands (with sandboxing)
 - **Sub-agents** — `task` for delegating work with isolated context windows
 - **Smart defaults** — Prompts that teach the model how to use these tools effectively

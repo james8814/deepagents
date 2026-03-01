@@ -29,6 +29,18 @@ dependencies = [
     "langchain-openai>=0.1.0,<2.0.0",
 ]
 
+[project.optional-dependencies]
+# File format converters for unified file reader
+# Install with: pip install deepagents[converters]
+converters = [
+    "pdfplumber>=0.10.0,<1.0.0",  # PDF conversion
+    "openpyxl>=3.1.0,<4.0.0",     # Excel conversion
+    "python-docx>=1.1.0,<2.0.0",  # Word conversion
+    "python-pptx>=0.6.21,<1.0.0", # PowerPoint conversion
+    "puremagic>=1.20.0,<2.0.0",   # MIME type detection (no libmagic required)
+    "Pillow>=10.0.0,<12.0.0",     # Image metadata extraction
+]
+
 
 [project.urls]
 Homepage = "https://docs.langchain.com/oss/python/deepagents/overview"
