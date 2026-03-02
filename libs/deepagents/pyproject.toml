@@ -52,6 +52,12 @@ test = [
   "langchain-openai",
   "twine",
   "build",
+  "pdfplumber",
+  "python-pptx",
+  "openpyxl",
+  "pillow",
+  "python-docx",
+  "puremagic",
 ]
 
 [build-system]

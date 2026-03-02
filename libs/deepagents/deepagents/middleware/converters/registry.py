@@ -2,6 +2,7 @@
 
 import logging
 from typing import TypeAlias
+import importlib
 
 from deepagents.middleware.converters.base import BaseConverter
 
@@ -23,8 +24,8 @@ def _create_default_registry() -> ConverterRegistry:
     registry: ConverterRegistry = {}
 
     # Text converter (always available, no dependencies)
-    from deepagents.middleware.converters.text import TextConverter
-
+    text_mod = importlib.import_module("deepagents.middleware.converters.text")
+    TextConverter = getattr(text_mod, "TextConverter")
     text_converter = TextConverter()
     registry["text/plain"] = text_converter
     registry["text/markdown"] = text_converter
@@ -46,23 +47,23 @@ def _create_default_registry() -> ConverterRegistry:
 
     # PDF converter (optional: pdfplumber)
     try:
-        from deepagents.middleware.converters.pdf import PDFConverter
-
+        pdf_mod = importlib.import_module("deepagents.middleware.converters.pdf")
+        PDFConverter = getattr(pdf_mod, "PDFConverter")
         pdf_converter = PDFConverter()
         registry["application/pdf"] = pdf_converter
     except ImportError:
         logger.debug("PDF converter not available (install pdfplumber)")
 
     # CSV converter (no dependencies beyond stdlib)
-    from deepagents.middleware.converters.csv import CSVConverter
-
+    csv_mod = importlib.import_module("deepagents.middleware.converters.csv")
+    CSVConverter = getattr(csv_mod, "CSVConverter")
     csv_converter = CSVConverter()
     registry["text/csv"] = csv_converter
 
     # Excel converter (optional: openpyxl)
     try:
-        from deepagents.middleware.converters.xlsx import XLSXConverter
-
+        xlsx_mod = importlib.import_module("deepagents.middleware.converters.xlsx")
+        XLSXConverter = getattr(xlsx_mod, "XLSXConverter")
         xlsx_converter = XLSXConverter()
         registry["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"] = xlsx_converter
         registry["application/vnd.ms-excel"] = xlsx_converter
@@ -71,8 +72,8 @@ def _create_default_registry() -> ConverterRegistry:
 
     # Word converter (optional: python-docx)
     try:
-        from deepagents.middleware.converters.docx import DOCXConverter
-
+        docx_mod = importlib.import_module("deepagents.middleware.converters.docx")
+        DOCXConverter = getattr(docx_mod, "DOCXConverter")
         docx_converter = DOCXConverter()
         registry["application/vnd.openxmlformats-officedocument.wordprocessingml.document"] = docx_converter
         registry["application/msword"] = docx_converter
@@ -81,8 +82,8 @@ def _create_default_registry() -> ConverterRegistry:
 
     # PowerPoint converter (optional: python-pptx)
     try:
-        from deepagents.middleware.converters.pptx import PPTXConverter
-
+        pptx_mod = importlib.import_module("deepagents.middleware.converters.pptx")
+        PPTXConverter = getattr(pptx_mod, "PPTXConverter")
         pptx_converter = PPTXConverter()
         registry["application/vnd.openxmlformats-officedocument.presentationml.presentation"] = pptx_converter
         registry["application/vnd.ms-powerpoint"] = pptx_converter
@@ -90,8 +91,8 @@ def _create_default_registry() -> ConverterRegistry:
         logger.debug("PPTX converter not available (install python-pptx)")
 
     # Image converter (basic placeholder support)
-    from deepagents.middleware.converters.image import ImageConverter
-
+    image_mod = importlib.import_module("deepagents.middleware.converters.image")
+    ImageConverter = getattr(image_mod, "ImageConverter")
     image_converter = ImageConverter()
     registry["image/png"] = image_converter
     registry["image/jpeg"] = image_converter

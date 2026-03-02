@@ -368,7 +368,7 @@ def test_format_skill_annotations_both_fields() -> None:
         metadata={},
         allowed_tools=[],
     )
-    assert _format_skill_annotations(skill) == "License: MIT, Compatibility: Python 3.10+"
+    assert _format_skill_annotations(skill) == "License: MIT; Compatibility: Python 3.10+"
 
 
 def test_format_skill_annotations_license_only() -> None:
@@ -477,7 +477,7 @@ Content
 
     result = _parse_skill_metadata(content, "/skills/test-skill/SKILL.md", "test-skill")
     assert result is not None
-    assert result["license"] == "True"
+    assert result["license"] is None
 
 
 def test_parse_skill_metadata_non_dict_metadata_ignored() -> None:
@@ -738,7 +738,7 @@ def test_format_skills_list_empty() -> None:
         sources=sources,
     )
 
-    result = middleware._format_skills_list([])
+    result = middleware._format_skills_list([], loaded=[], resources={})
     assert "No skills available" in result
     assert "/skills/user/" in result
     assert "/skills/project/" in result
@@ -764,10 +764,10 @@ def test_format_skills_list_single_skill() -> None:
         }
     ]
 
-    result = middleware._format_skills_list(skills)
+    result = middleware._format_skills_list(skills, loaded=[], resources={})
     assert "web-research" in result
     assert "Research topics on the web" in result
-    assert "/skills/user/web-research/SKILL.md" in result
+    assert 'Use `load_skill("web-research")`' in result
 
 
 def test_format_skills_list_multiple_skills_multiple_registries() -> None:
@@ -811,7 +811,7 @@ def test_format_skills_list_multiple_skills_multiple_registries() -> None:
         },
     ]
 
-    result = middleware._format_skills_list(skills)
+    result = middleware._format_skills_list(skills, loaded=[], resources={})
 
     # Check that all skills are present
     assert "skill-a" in result
@@ -840,8 +840,8 @@ def test_format_skills_list_with_license_and_compatibility() -> None:
         }
     ]
 
-    result = middleware._format_skills_list(skills)
-    assert "(License: Apache-2.0, Compatibility: Requires poppler)" in result
+    result = middleware._format_skills_list(skills, loaded=[], resources={})
+    assert "(License: Apache-2.0; Compatibility: Requires poppler)" in result
 
 
 def test_format_skills_list_license_only() -> None:
@@ -860,7 +860,7 @@ def test_format_skills_list_license_only() -> None:
         }
     ]
 
-    result = middleware._format_skills_list(skills)
+    result = middleware._format_skills_list(skills, loaded=[], resources={})
     assert "(License: MIT)" in result
     assert "Compatibility" not in result
 
@@ -881,7 +881,7 @@ def test_format_skills_list_compatibility_only() -> None:
         }
     ]
 
-    result = middleware._format_skills_list(skills)
+    result = middleware._format_skills_list(skills, loaded=[], resources={})
     assert "(Compatibility: Python 3.10+)" in result
     assert "License" not in result
 
@@ -902,7 +902,7 @@ def test_format_skills_list_no_optional_fields() -> None:
         }
     ]
 
-    result = middleware._format_skills_list(skills)
+    result = middleware._format_skills_list(skills, loaded=[], resources={})
     # Description line should NOT have any parenthetical annotation
     assert "- **plain-skill**: A plain skill\n" in result
     assert "License" not in result

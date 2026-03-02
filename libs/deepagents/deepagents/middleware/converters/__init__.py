@@ -28,10 +28,10 @@ from deepagents.middleware.converters.registry import (
 from deepagents.middleware.converters.utils import detect_mime_type
 
 __all__ = [
+    "DEFAULT_CONVERTER_REGISTRY",
     "BaseConverter",
     "ConverterRegistry",
     "ConverterRegistryManager",
-    "DEFAULT_CONVERTER_REGISTRY",
     "detect_mime_type",
     "get_default_registry",
 ]

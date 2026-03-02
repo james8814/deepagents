@@ -42,7 +42,6 @@ from deepagents.backends.utils import (
     validate_path,
 )
 from deepagents.middleware._utils import append_to_system_message
-from deepagents.middleware.converters import detect_mime_type, get_default_registry
 
 EMPTY_CONTENT_WARNING = "System reminder: File exists but has empty contents"
 GLOB_TIMEOUT = 20.0  # seconds
