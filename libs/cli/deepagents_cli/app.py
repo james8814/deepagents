@@ -119,6 +119,41 @@ def _format_token_count(count: int) -> str:
     return str(count)
 
 
+def _format_compact_limit(
+    keep: tuple[str, int | float], context_limit: int | None
+) -> str:
+    """Format compact retention settings into a human-readable limit string.
+
+    Args:
+        keep: Retention policy tuple from summarization defaults.
+        context_limit: Model context limit when available.
+
+    Returns:
+        A short display string describing the compact retention limit.
+    """
+    keep_type, keep_value = keep
+
+    if keep_type == "messages":
+        count = int(keep_value)
+        noun = "message" if count == 1 else "messages"
+        return f"last {count} {noun}"
+
+    if keep_type == "tokens":
+        return f"{_format_token_count(int(keep_value))} tokens"
+
+    if keep_type == "fraction":
+        percent = float(keep_value) * 100
+        if context_limit is not None:
+            token_limit = max(1, int(context_limit * float(keep_value)))
+            return (
+                f"{_format_token_count(token_limit)} tokens "
+                f"({percent:.0f}% of {_format_token_count(context_limit)})"
+            )
+        return f"{percent:.0f}% of context window"
+
+    return "current retention threshold"
+
+
 def _write_iterm_escape(sequence: str) -> None:
     """Write an iTerm2 escape sequence to stderr.
 
@@ -463,6 +498,7 @@ class DeepAgentsApp(App):
         self._pending_messages: deque[QueuedMessage] = deque()
         self._queued_widgets: deque[QueuedUserMessage] = deque()
         self._processing_pending = False
+        self._thread_switching = False
         # Message virtualization store
         self._message_store = MessageStore()
         # Lazily imported here to avoid pulling image dependencies into
@@ -531,6 +567,13 @@ class DeepAgentsApp(App):
             )
             self._ui_adapter.set_token_tracker(self._token_tracker)
 
+            # Prewarm `/threads` cache in the background so first open is faster.
+            self.run_worker(
+                self._prewarm_threads_cache,
+                exclusive=True,
+                group="startup-thread-prewarm",
+            )
+
         # Focus the input (autocomplete is now built into ChatInput)
         self._chat_input.focus_input()
 
@@ -584,6 +627,15 @@ class DeepAgentsApp(App):
             self.call_after_refresh(self._size_initial_spacer)
         except NoMatches:
             pass  # Spacer already removed, no action needed
+
+    async def _prewarm_threads_cache(self) -> None:  # noqa: PLR6301  # Worker hook kept as instance method
+        """Prewarm thread selector cache without blocking app startup."""
+        from deepagents_cli.sessions import (
+            get_thread_limit,
+            prewarm_thread_message_counts,
+        )
+
+        await prewarm_thread_message_counts(limit=get_thread_limit())
 
     def on_scroll_up(self, _event: ScrollUp) -> None:
         """Handle scroll up to check if we need to hydrate older messages."""
@@ -952,6 +1004,15 @@ class DeepAgentsApp(App):
         # Reset quit pending state on any input
         self._quit_pending = False
 
+        # Prevent message handling while a thread switch is in-flight.
+        if self._thread_switching:
+            self.notify(
+                "Thread switch in progress. Please wait.",
+                severity="warning",
+                timeout=3,
+            )
+            return
+
         # If agent is running, enqueue message instead of processing immediately
         if self._agent_running:
             self._pending_messages.append(QueuedMessage(text=value, mode=mode))
@@ -1216,11 +1277,19 @@ class DeepAgentsApp(App):
                 if context_limit is not None:
                     limit_str = _format_token_count(context_limit)
                     pct = count / context_limit * 100
-                    usage = f"{formatted} / {limit_str} tokens ({pct:.0f}%)"
+                    usage = (
+                        f"{formatted} / {limit_str} tokens "
+                        f"({pct:.0f}%, includes system prompt + tools)"
+                    )
                 else:
-                    usage = f"{formatted} tokens used"
+                    usage = f"{formatted} tokens used (includes system prompt + tools)"
 
                 msg = f"{usage} · {model_name}" if model_name else usage
+
+                # Append conversation-only token count when available
+                conv_line = await self._get_conversation_token_line()
+                if conv_line:
+                    msg = f"{msg}\n{conv_line}"
 
                 await self._mount_message(AppMessage(msg))
             else:
@@ -1300,6 +1369,34 @@ class DeepAgentsApp(App):
 
         self.call_after_refresh(_scroll_after_command)
 
+    async def _get_conversation_token_line(self) -> str | None:
+        """Return a short string with the conversation-only token count.
+
+        Returns:
+            Formatted line like `"Conversation only: ~18 tokens"`, or
+            `None` if state is unavailable.
+        """
+        if not self._agent:
+            return None
+        try:
+            from langchain_core.messages.utils import (
+                count_tokens_approximately,
+            )
+
+            config: RunnableConfig = {
+                "configurable": {"thread_id": self._lc_thread_id},
+            }
+            state = await self._agent.aget_state(config)
+            if not state or not state.values:
+                return None
+            messages = state.values.get("messages", [])
+            if not messages:
+                return None
+            conv_tokens = count_tokens_approximately(messages)
+            return f"Conversation only: ~{_format_token_count(conv_tokens)} tokens"
+        except Exception:  # noqa: BLE001
+            return None
+
     async def _handle_compact(self) -> None:
         """Compact the conversation by summarizing old messages.
 
@@ -1311,7 +1408,7 @@ class DeepAgentsApp(App):
         Compaction is a no-op when the conversation's total token count is
         within the `keep` budget (by default 10% of the model's
         `max_input_tokens`). Until that threshold is exceeded the user sees
-        "Nothing to compact yet".
+        "Nothing to compact yet" plus the active compact limit.
         """
         if not self._agent or not self._lc_thread_id or not self._backend:
             await self._mount_message(
@@ -1403,14 +1500,47 @@ class DeepAgentsApp(App):
             effective = middleware._apply_event_to_messages(messages, event)
 
             cutoff = middleware._determine_cutoff_index(effective)
+            compact_limit = _format_compact_limit(
+                defaults["keep"],
+                settings.model_context_limit,
+            )
 
             if cutoff == 0:
-                await self._mount_message(
-                    AppMessage(
-                        "Nothing to compact yet"
-                        " \u2014 conversation is within the token budget"
-                    )
+                conv_tokens = count_tokens_approximately(effective)
+                conv_str = _format_token_count(conv_tokens)
+                total_context = (
+                    self._token_tracker.current_context if self._token_tracker else 0
                 )
+                context_limit = settings.model_context_limit
+
+                if (
+                    total_context > 0
+                    and context_limit is not None
+                    and total_context > context_limit
+                ):
+                    # Case A: overhead-dominated — total context exceeds
+                    # limit but conversation itself is small
+                    total_str = _format_token_count(total_context)
+                    await self._mount_message(
+                        AppMessage(
+                            f"Nothing to compact \u2014 conversation is only "
+                            f"~{conv_str} tokens.\n"
+                            f"Total context ({total_str}) is mostly system "
+                            f"prompt and tool overhead, which compaction "
+                            f"cannot reduce.\n"
+                            f"Retention budget: {compact_limit}"
+                        )
+                    )
+                else:
+                    # Case B: genuinely within budget
+                    await self._mount_message(
+                        AppMessage(
+                            "Nothing to compact yet \u2014 conversation is "
+                            "within the retention budget.\n"
+                            f"Conversation: ~{conv_str} tokens \u00b7 "
+                            f"Retention budget: {compact_limit}"
+                        )
+                    )
                 return
 
             to_summarize, to_keep = middleware._partition_messages(effective, cutoff)
@@ -1474,11 +1604,12 @@ class DeepAgentsApp(App):
 
             await self._mount_message(
                 AppMessage(
-                    f"Compacted {len(to_summarize)} messages "
-                    f"({summarized_before} \u2192 {summarized_after} tokens)\n"
-                    f"  total context: {before} \u2192 {after} "
-                    f"({pct}% decrease) "
-                    f"\u00b7 {len(to_keep)} messages unchanged"
+                    "Conversation compacted. "
+                    f"Summarized {len(to_summarize)} messages into a concise summary.\n"
+                    f"Summarized context: {summarized_before} \u2192 "
+                    f"{summarized_after} tokens\n"
+                    f"Total context: {before} \u2192 {after} tokens "
+                    f"({pct}% decrease), {len(to_keep)} messages unchanged."
                 )
             )
 
@@ -1801,32 +1932,130 @@ class DeepAgentsApp(App):
 
         return result
 
-    async def _load_thread_history(self) -> None:
+    async def _fetch_thread_history_data(self, thread_id: str) -> list[MessageData]:
+        """Fetch and convert stored messages for a thread.
+
+        Args:
+            thread_id: Thread ID to fetch from checkpoint storage.
+
+        Returns:
+            Converted message data ready for bulk loading.
+        """
+        if not self._agent:
+            return []
+
+        config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+        state = await self._agent.aget_state(config)
+        if not state or not state.values:
+            return []
+
+        messages = state.values.get("messages", [])
+        if not messages:
+            return []
+
+        # Offload conversion so large histories don't block the UI loop.
+        return await asyncio.to_thread(self._convert_messages_to_data, messages)
+
+    async def _upgrade_thread_message_link(
+        self,
+        widget: AppMessage,
+        *,
+        prefix: str,
+        thread_id: str,
+    ) -> None:
+        """Upgrade a plain thread message to a linked one when URL resolves.
+
+        Args:
+            widget: The already-mounted app message.
+            prefix: Text prefix before thread ID.
+            thread_id: Thread ID to resolve.
+        """
+        try:
+            thread_msg = await self._build_thread_message(prefix, thread_id)
+            if not isinstance(thread_msg, Text):
+                logger.debug(
+                    "Skipping thread link upgrade for %s: URL did not resolve",
+                    thread_id,
+                )
+                return
+            if widget.parent is None:
+                logger.debug(
+                    "Skipping thread link upgrade for %s: widget no longer mounted",
+                    thread_id,
+                )
+                return
+            # Keep serialized content in sync with the rendered content.
+            widget._content = thread_msg
+            widget.update(thread_msg)
+        except Exception:
+            logger.warning(
+                "Failed to upgrade thread message link for %s",
+                thread_id,
+                exc_info=True,
+            )
+
+    def _schedule_thread_message_link(
+        self,
+        widget: AppMessage,
+        *,
+        prefix: str,
+        thread_id: str,
+    ) -> None:
+        """Schedule thread URL link resolution and apply updates in the background.
+
+        Args:
+            widget: The message widget to update.
+            prefix: Text prefix before thread ID.
+            thread_id: Thread ID to resolve.
+        """
+        self.run_worker(
+            self._upgrade_thread_message_link(
+                widget,
+                prefix=prefix,
+                thread_id=thread_id,
+            ),
+            exclusive=False,
+        )
+
+    async def _load_thread_history(
+        self,
+        *,
+        thread_id: str | None = None,
+        preloaded_data: list[MessageData] | None = None,
+    ) -> None:
         """Load and render message history when resuming a thread.
 
-        This retrieves the checkpoint state from the agent and converts stored
-        messages into lightweight `MessageData` objects, then bulk-loads them
-        into the `MessageStore`. Only the last `WINDOW_SIZE` messages are
-        mounted as widgets, drastically reducing DOM operations for large
+        When `preloaded_data` is provided (e.g., from `_resume_thread`), this
+        reuses that payload. Otherwise, it fetches checkpoint state from the
+        agent and converts stored messages into lightweight `MessageData`
+        objects. The method then bulk-loads into the `MessageStore` and mounts
+        only the last `WINDOW_SIZE` widgets to reduce DOM operations on large
         threads.
+
+        Args:
+            thread_id: Optional explicit thread ID to load.
+
+                Defaults to current.
+            preloaded_data: Optional pre-fetched history data for the thread.
         """
-        if not self._agent or not self._lc_thread_id:
+        history_thread_id = thread_id or self._lc_thread_id
+        if not history_thread_id:
+            logger.debug("Skipping history load: no thread ID available")
+            return
+        if preloaded_data is None and not self._agent:
+            logger.debug(
+                "Skipping history load for %s: no active agent and no preloaded data",
+                history_thread_id,
+            )
             return
 
-        config: RunnableConfig = {"configurable": {"thread_id": self._lc_thread_id}}
-
         try:
-            # 1. Fetch state (single network call)
-            state = await self._agent.aget_state(config)
-            if not state or not state.values:
-                return
-
-            messages = state.values.get("messages", [])
-            if not messages:
-                return
-
-            # 2. Convert to data (pure computation, no DOM)
-            all_data = self._convert_messages_to_data(messages)
+            # Fetch + convert, or reuse preloaded payload on thread switch.
+            all_data = (
+                preloaded_data
+                if preloaded_data is not None
+                else await self._fetch_thread_history_data(history_thread_id)
+            )
             if not all_data:
                 return
 
@@ -1843,18 +2072,37 @@ class DeepAgentsApp(App):
                 return
 
             # 6-7. Create and mount only visible widgets (max WINDOW_SIZE)
-            for msg_data in visible:
-                widget = msg_data.to_widget()
-                await messages_container.mount(widget)
-                # 8. Render content for AssistantMessage after mount
-                if isinstance(widget, AssistantMessage) and msg_data.content:
-                    await widget.set_content(msg_data.content)
+            widgets = [msg_data.to_widget() for msg_data in visible]
+            if widgets:
+                await messages_container.mount(*widgets)
 
-            # 9. Add footer — "Resumed thread" message
-            thread_msg = await self._build_thread_message(
-                "Resumed thread", self._lc_thread_id
+            # 8. Render content for AssistantMessage after mount
+            assistant_updates = [
+                widget.set_content(msg_data.content)
+                for widget, msg_data in zip(widgets, visible, strict=False)
+                if isinstance(widget, AssistantMessage) and msg_data.content
+            ]
+            if assistant_updates:
+                assistant_results = await asyncio.gather(
+                    *assistant_updates,
+                    return_exceptions=True,
+                )
+                for error in assistant_results:
+                    if isinstance(error, Exception):
+                        logger.warning(
+                            "Failed to render assistant history message for %s: %s",
+                            history_thread_id,
+                            error,
+                        )
+
+            # 9. Add footer immediately and resolve link asynchronously
+            thread_msg_widget = AppMessage(f"Resumed thread: {history_thread_id}")
+            await self._mount_message(thread_msg_widget)
+            self._schedule_thread_message_link(
+                thread_msg_widget,
+                prefix="Resumed thread",
+                thread_id=history_thread_id,
             )
-            await self._mount_message(AppMessage(thread_msg))
 
             # 10. Scroll once
             def scroll_to_end() -> None:
@@ -1865,7 +2113,10 @@ class DeepAgentsApp(App):
             self.set_timer(0.1, scroll_to_end)
 
         except Exception as e:  # Resilient history loading
-            logger.exception("Failed to load thread history for %s", self._lc_thread_id)
+            logger.exception(
+                "Failed to load thread history for %s",
+                history_thread_id,
+            )
             await self._mount_message(AppMessage(f"Could not load history: {e}"))
 
     async def _mount_message(
@@ -2219,7 +2470,11 @@ class DeepAgentsApp(App):
 
     async def _show_thread_selector(self) -> None:
         """Show interactive thread selector as a modal screen."""
+        from deepagents_cli.sessions import get_cached_threads, get_thread_limit
+
         current = self._session_state.thread_id if self._session_state else None
+        thread_limit = get_thread_limit()
+        initial_threads = get_cached_threads(limit=thread_limit)
 
         def handle_result(result: str | None) -> None:
             """Handle the thread selector result."""
@@ -2228,14 +2483,42 @@ class DeepAgentsApp(App):
             if self._chat_input:
                 self._chat_input.focus_input()
 
-        screen = ThreadSelectorScreen(current_thread=current)
+        screen = ThreadSelectorScreen(
+            current_thread=current,
+            thread_limit=thread_limit,
+            initial_threads=initial_threads,
+        )
         self.push_screen(screen, handle_result)
+
+    def _update_welcome_banner(
+        self,
+        thread_id: str,
+        *,
+        missing_message: str,
+        warn_if_missing: bool,
+    ) -> None:
+        """Update the welcome banner thread ID when the banner is mounted.
+
+        Args:
+            thread_id: Thread ID to display on the banner.
+            missing_message: Log message template when banner is missing.
+            warn_if_missing: Whether to log missing-banner cases at warning level.
+        """
+        try:
+            banner = self.query_one("#welcome-banner", WelcomeBanner)
+            banner.update_thread_id(thread_id)
+        except NoMatches:
+            if warn_if_missing:
+                logger.warning(missing_message, thread_id)
+            else:
+                logger.debug(missing_message, thread_id)
 
     async def _resume_thread(self, thread_id: str) -> None:
         """Resume a previously saved thread.
 
-        Clears the current conversation, switches to the selected thread,
-        updates the welcome banner, and loads its message history.
+        Fetches the selected thread history, then atomically switches UI state.
+        Prefetching first avoids clearing the active chat when history loading
+        fails.
 
         Args:
             thread_id: The thread ID to resume.
@@ -2257,11 +2540,22 @@ class DeepAgentsApp(App):
             await self._mount_message(AppMessage(f"Already on thread: {thread_id}"))
             return
 
+        if self._thread_switching:
+            await self._mount_message(AppMessage("Thread switch already in progress."))
+            return
+
         # Save previous state for rollback on failure
         prev_thread_id = self._lc_thread_id
         prev_session_thread = self._session_state.thread_id
+        self._thread_switching = True
+        if self._chat_input:
+            self._chat_input.set_cursor_active(active=False)
 
+        prefetched_history: list[MessageData] | None = None
         try:
+            self._update_status(f"Loading thread: {thread_id}")
+            prefetched_history = await self._fetch_thread_history_data(thread_id)
+
             # Clear conversation (similar to /clear, without creating a new thread)
             self._pending_messages.clear()
             self._queued_widgets.clear()
@@ -2274,48 +2568,61 @@ class DeepAgentsApp(App):
             self._session_state.thread_id = thread_id
             self._lc_thread_id = thread_id
 
-            # Update welcome banner
-            try:
-                banner = self.query_one("#welcome-banner", WelcomeBanner)
-                banner.update_thread_id(thread_id)
-            except NoMatches:
-                logger.debug(
-                    "Welcome banner not found during thread switch to %s",
-                    thread_id,
-                )
+            self._update_welcome_banner(
+                thread_id,
+                missing_message="Welcome banner not found during thread switch to %s",
+                warn_if_missing=False,
+            )
 
             # Load thread history
-            await self._load_thread_history()
-
+            await self._load_thread_history(
+                thread_id=thread_id,
+                preloaded_data=prefetched_history,
+            )
         except Exception as exc:
+            if prefetched_history is None:
+                logger.exception("Failed to prefetch history for thread %s", thread_id)
+                await self._mount_message(
+                    AppMessage(
+                        f"Failed to switch to thread {thread_id}: {exc}. "
+                        "Use /threads to try again."
+                    )
+                )
+                return
             logger.exception("Failed to switch to thread %s", thread_id)
             # Restore previous thread IDs so the user can retry
             self._session_state.thread_id = prev_session_thread
             self._lc_thread_id = prev_thread_id
-            try:
-                banner = self.query_one("#welcome-banner", WelcomeBanner)
-                banner.update_thread_id(prev_session_thread)
-            except NoMatches:
-                logger.warning(
+            self._update_welcome_banner(
+                prev_session_thread,
+                missing_message=(
                     "Welcome banner not found during rollback to thread %s; "
-                    "banner may display stale thread ID",
-                    prev_session_thread,
-                )
+                    "banner may display stale thread ID"
+                ),
+                warn_if_missing=True,
+            )
+            rollback_restore_failed = False
             # Attempt to restore the previous thread's visible history
             try:
-                await self._load_thread_history()
-            except Exception:  # noqa: BLE001  # Resilient session state saving
-                logger.debug(
-                    "Could not restore previous thread history after "
-                    "failed switch to %s",
-                    thread_id,
+                await self._clear_messages()
+                await self._load_thread_history(thread_id=prev_session_thread)
+            except Exception:  # Resilient session state saving
+                rollback_restore_failed = True
+                msg = (
+                    "Could not restore previous thread history after failed "
+                    "switch to %s"
                 )
-            await self._mount_message(
-                AppMessage(
-                    f"Failed to switch to thread {thread_id}: {exc}. "
-                    "Use /threads to try again."
-                )
-            )
+                logger.warning(msg, thread_id, exc_info=True)
+            error_message = f"Failed to switch to thread {thread_id}: {exc}."
+            if rollback_restore_failed:
+                error_message += " Previous thread history could not be restored."
+            error_message += " Use /threads to try again."
+            await self._mount_message(AppMessage(error_message))
+        finally:
+            self._thread_switching = False
+            self._update_status("")
+            if self._chat_input:
+                self._chat_input.set_cursor_active(active=not self._agent_running)
 
     async def _switch_model(self, model_spec: str) -> None:
         """Switch to a new model, preserving conversation history.
