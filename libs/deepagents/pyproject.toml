@@ -65,6 +65,7 @@ evals = [
   "langchain-mistralai",
   "langchain-deepseek",
   "langchain-groq",
+  "langchain-ollama",
 ]
 
 [build-system]
