@@ -127,7 +127,7 @@ class TextConverter(BaseConverter):
 
         # Check for language-specific patterns
         content_lower = content.lower()
-        if "def " in content or "import " in content and "from " in content:
+        if "def " in content or ("import " in content and "from " in content):
             return "python"
         if "function " in content or "const " in content or "let " in content:
             if "=>" in content or "async " in content:

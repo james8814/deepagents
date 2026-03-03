@@ -5,7 +5,6 @@ and logging that subclasses can reuse.
 """
 
 import logging
-import time
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
@@ -43,7 +42,6 @@ class BaseConverter(ABC):
         Returns:
             Markdown-formatted string representation of the file content.
         """
-        pass
 
     def supports_pagination(self) -> bool:
         """Check if this converter supports page-by-page reading.
@@ -96,18 +94,18 @@ class BaseConverter(ABC):
         Returns:
             Markdown table string.
         """
-        if not rows:
+        if not rows and not headers:
             return ""
 
         # Convert all cells to strings
         str_rows = [[str(cell) if cell is not None else "" for cell in row] for row in rows]
 
-        # Use first row as headers if not provided
-        if headers is None and str_rows:
-            headers = str_rows[0]
-            str_rows = str_rows[1:]
-        elif headers is None:
-            headers = []
+        if headers is None:
+            if str_rows:
+                headers = str_rows[0]
+                str_rows = str_rows[1:]
+            else:
+                headers = []
 
         if not headers:
             return "\n".join(" ".join(row) for row in str_rows)

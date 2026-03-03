@@ -78,17 +78,16 @@ def detect_mime_type(path: str | Path, content: bytes | None = None) -> str:
     path = Path(path)
     ext = path.suffix.lower()
 
-    # Layer 1: Try puremagic for content-based detection
-    # puremagic is a pure Python library that doesn't require libmagic
+    # Attempt to read content if not provided (for tests and content-based detection)
+    if content is None:
+        try:
+            content = path.read_bytes()
+        except (OSError, PermissionError):
+            content = b""
+
+    # Layer 1: Try puremagic for content-based detection (if installed)
     try:
         import puremagic
-
-        # Read content if not provided
-        if content is None:
-            try:
-                content = path.read_bytes()
-            except (OSError, PermissionError):
-                content = b""
 
         if content:
             # puremagic returns a list of matches, sorted by confidence

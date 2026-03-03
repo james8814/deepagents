@@ -36,7 +36,7 @@ class DOCXConverter(BaseConverter):
 
         start = time.time()
 
-        doc = Document(path)
+        doc = Document(str(path))
         parts = []
 
         for para in doc.paragraphs:

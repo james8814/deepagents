@@ -31,9 +31,10 @@ import shutil
 import tempfile
 import threading
 import weakref
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from deepagents.backends.protocol import BackendProtocol, FileOperationError
@@ -49,6 +50,7 @@ def _get_backends():
     global _imported_backends
     if _imported_backends is None:
         from deepagents import backends
+
         _imported_backends = backends
     return _imported_backends
 
@@ -57,6 +59,7 @@ def _get_protocol():
     global _imported_protocol
     if _imported_protocol is None:
         from deepagents.backends import protocol
+
         _imported_protocol = protocol
     return _imported_protocol
 
@@ -65,6 +68,7 @@ def _get_utils():
     global _imported_utils
     if _imported_utils is None:
         from deepagents.backends import utils
+
         _imported_utils = utils
     return _imported_utils
 
@@ -89,7 +93,7 @@ class UploadResult:
 
     path: str
     success: bool
-    error: "FileOperationError | str | None"
+    error: FileOperationError | str | None
     strategy: str
     encoding: str | None = None
     physical_path: str | None = None
@@ -137,9 +141,9 @@ _state_lock_manager = _StateUploadLock()
 
 
 def _resolve_backend(
-    backend_or_factory: "BackendProtocol | Callable[[Any], BackendProtocol]",
+    backend_or_factory: BackendProtocol | Callable[[Any], BackendProtocol],
     runtime: Any | None = None,
-) -> "BackendProtocol":
+) -> BackendProtocol:
     """Resolve backend from factory function or return as-is.
 
     Args:
@@ -155,28 +159,24 @@ def _resolve_backend(
     # Check if it's a backend instance by duck typing
     # Using hasattr to avoid circular import of BackendProtocol
     has_protocol_methods = (
-        hasattr(backend_or_factory, "upload_files")
-        and hasattr(backend_or_factory, "read")
-        and hasattr(backend_or_factory, "write")
+        hasattr(backend_or_factory, "upload_files") and hasattr(backend_or_factory, "read") and hasattr(backend_or_factory, "write")
     )
 
     # If it's already a backend instance, return it
     if has_protocol_methods and not callable(backend_or_factory):
-        return backend_or_factory  # type: ignore[return-value]
+        return cast("BackendProtocol", backend_or_factory)
 
     # If it's callable (factory function), call it with runtime
     if callable(backend_or_factory):
         if runtime is None:
-            raise RuntimeError(
-                "Backend factory requires runtime parameter. "
-                "Pass runtime= when calling upload_files()."
-            )
-        return backend_or_factory(runtime)
+            raise RuntimeError("Backend factory requires runtime parameter. Pass runtime= when calling upload_files().")
+        backend_factory = cast("Callable[[Any], BackendProtocol]", backend_or_factory)
+        return backend_factory(runtime)
 
-    return backend_or_factory  # type: ignore[return-value]
+    return cast("BackendProtocol", backend_or_factory)
 
 
-def _select_strategy(backend: "BackendProtocol") -> str:
+def _select_strategy(backend: BackendProtocol) -> str:
     """Select upload strategy based on backend type.
 
     Uses simple if-elif chain for clarity and maintainability.
@@ -214,7 +214,7 @@ def _select_strategy(backend: "BackendProtocol") -> str:
 
 
 def _upload_direct(
-    backend: "BackendProtocol",
+    backend: BackendProtocol,
     files: list[tuple[str, bytes]],
     runtime: Any | None = None,
 ) -> list[UploadResult]:
@@ -245,7 +245,7 @@ def _upload_direct(
         # AttributeError: method doesn't exist
         # OSError: file system errors (permission, not found, etc.)
         # ValueError: invalid arguments
-        logger.debug(f"download_files failed, assuming no existing files: {e}")
+        logger.debug("download_files failed, assuming no existing files: %s", e)
         for path, _ in files:
             existing_sizes[path] = None
 
@@ -281,7 +281,7 @@ def _upload_direct(
 
 
 def _upload_to_state(
-    backend: "BackendProtocol",
+    backend: BackendProtocol,
     files: list[tuple[str, bytes]],
     runtime: Any | None = None,
 ) -> list[UploadResult]:
@@ -309,7 +309,7 @@ def _upload_to_state(
 
 
 def _upload_to_state_locked(
-    backend: "BackendProtocol",
+    backend: BackendProtocol,
     files: list[tuple[str, bytes]],
     runtime: Any,
 ) -> list[UploadResult]:
@@ -343,7 +343,8 @@ def _upload_to_state_locked(
                 file_content += base64.b64encode(content).decode("ascii")
 
             # Update runtime state
-            state = backend.runtime.state
+            backend_runtime = cast("Any", backend).runtime
+            state = backend_runtime.state
             if "files" not in state:
                 state["files"] = {}
             state["files"][path] = create_file_data(file_content)
@@ -354,7 +355,7 @@ def _upload_to_state_locked(
 
 
 def _upload_single_to_state(
-    backend: "BackendProtocol",
+    backend: BackendProtocol,
     path: str,
     content: bytes,
     max_file_size: int,
@@ -375,8 +376,7 @@ def _upload_single_to_state(
         return UploadResult(
             path=path,
             success=False,
-            error=f"File too large ({len(content)} > {max_file_size}). "
-                  f"Consider using FilesystemBackend.",
+            error=f"File too large ({len(content)} > {max_file_size}). Consider using FilesystemBackend.",
             strategy="state",
         )
 
@@ -482,7 +482,7 @@ def _is_text_content(content: bytes, sample_size: int = 8192) -> bool:
 
 
 def _upload_fallback(
-    backend: "BackendProtocol",
+    backend: BackendProtocol,
     files: list[tuple[str, bytes]],
     runtime: Any | None = None,
 ) -> list[UploadResult]:
@@ -509,10 +509,7 @@ def _upload_fallback(
 
     # Create secure private temporary directory
     # Using mkdtemp with random suffix for unpredictability
-    root_dir_str = tempfile.mkdtemp(
-        prefix="deepagents_upload_",
-        suffix=f"_{secrets.token_hex(8)}"
-    )
+    root_dir_str = tempfile.mkdtemp(prefix="deepagents_upload_", suffix=f"_{secrets.token_hex(8)}")
     root_dir = Path(root_dir_str)
 
     try:
@@ -574,7 +571,7 @@ def _upload_fallback(
 
 
 def upload_files(
-    backend_or_factory: "BackendProtocol | Callable[[Any], BackendProtocol]",
+    backend_or_factory: BackendProtocol | Callable[[Any], BackendProtocol],
     files: list[tuple[str, bytes]],
     runtime: Any | None = None,
 ) -> list[UploadResult]:
@@ -604,10 +601,13 @@ def upload_files(
     Example:
         >>> from deepagents.backends import FilesystemBackend
         >>> backend = FilesystemBackend(root_dir="/workspace")
-        >>> results = upload_files(backend, [
-        ...     ("/uploads/file1.txt", b"content1"),
-        ...     ("/uploads/file2.txt", b"content2"),
-        ... ])
+        >>> results = upload_files(
+        ...     backend,
+        ...     [
+        ...         ("/uploads/file1.txt", b"content1"),
+        ...         ("/uploads/file2.txt", b"content2"),
+        ...     ],
+        ... )
         >>> for result in results:
         ...     print(f"{result.path}: {'OK' if result.success else 'FAILED'}")
     """
@@ -617,15 +617,15 @@ def upload_files(
     # Select strategy based on backend type
     strategy = _select_strategy(backend)
 
-    logger.debug(f"Uploading {len(files)} files using strategy: {strategy}")
+    logger.debug("Uploading %d files using strategy: %s", len(files), strategy)
 
     # Execute upload with selected strategy
     if strategy == "direct":
         return _upload_direct(backend, files, runtime)
-    elif strategy == "state":
+    if strategy == "state":
         return _upload_to_state(backend, files, runtime)
-    else:  # fallback
-        return _upload_fallback(backend, files, runtime)
+    # fallback
+    return _upload_fallback(backend, files, runtime)
 
 
 # Convenience alias for backward compatibility

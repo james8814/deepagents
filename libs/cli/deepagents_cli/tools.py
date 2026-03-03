@@ -1,57 +1,35 @@
 """Custom tools for the CLI agent."""
 
-from typing import Any, Literal
+from __future__ import annotations
 
-import requests
-from markdownify import markdownify
-from tavily import (
-    BadRequestError,
-    InvalidAPIKeyError,
-    MissingAPIKeyError,
-    TavilyClient,
-    UsageLimitExceededError,
-)
-from tavily.errors import ForbiddenError, TimeoutError as TavilyTimeoutError
+from typing import TYPE_CHECKING, Any, Literal
 
-from deepagents_cli.config import settings
+if TYPE_CHECKING:
+    from tavily import TavilyClient
 
-# Initialize Tavily client if API key is available
-tavily_client = (
-    TavilyClient(api_key=settings.tavily_api_key) if settings.has_tavily else None
-)
-
-# Try to import DuckDuckGo search (free fallback)
-try:
-    from duckduckgo_search import DDGS
-    DDGS_AVAILABLE = True
-except ImportError:
-    DDGS_AVAILABLE = False
+_UNSET = object()
+_tavily_client: TavilyClient | object | None = _UNSET
 
 
-def _duckduckgo_search(query: str, max_results: int = 5) -> dict:
-    """Search using DuckDuckGo (free, no API key required).
-    
-    Args:
-        query: Search query
-        max_results: Maximum number of results
-        
+def _get_tavily_client() -> TavilyClient | None:
+    """Get or initialize the lazy Tavily client singleton.
+
     Returns:
-        Dictionary with search results in Tavily-compatible format
+        TavilyClient instance, or None if API key is not configured.
     """
-    if not DDGS_AVAILABLE:
-        raise ImportError("DuckDuckGo search not available. Install: pip install duckduckgo-search")
-    
-    results = []
-    with DDGS() as ddgs:
-        for result in ddgs.text(query, max_results=max_results):
-            results.append({
-                "title": result.get("title", ""),
-                "url": result.get("href", ""),
-                "content": result.get("body", ""),
-                "score": 0.9,  # DuckDuckGo doesn't provide scores
-            })
-    
-    return {"results": results, "query": query}
+    global _tavily_client  # noqa: PLW0603  # Module-level cache requires global statement
+    if _tavily_client is not _UNSET:
+        return _tavily_client  # type: ignore[return-value]  # narrowed by sentinel check
+
+    from deepagents_cli.config import settings
+
+    if settings.has_tavily:
+        from tavily import TavilyClient as _TavilyClient
+
+        _tavily_client = _TavilyClient(api_key=settings.tavily_api_key)
+    else:
+        _tavily_client = None
+    return _tavily_client
 
 
 def http_request(
@@ -75,6 +53,8 @@ def http_request(
     Returns:
         Dictionary with response data including status, headers, and content
     """
+    import requests
+
     try:
         kwargs: dict[str, Any] = {}
 
@@ -96,7 +76,7 @@ def http_request(
             content = response.text
 
         return {
-            "success": response.status_code < 400,
+            "success": response.status_code < 400,  # noqa: PLR2004  # HTTP status code threshold
             "status_code": response.status_code,
             "headers": dict(response.headers),
             "content": content,
@@ -121,20 +101,16 @@ def http_request(
         }
 
 
-def web_search(
+def web_search(  # noqa: ANN201  # Return type depends on dynamic tool configuration
     query: str,
     max_results: int = 5,
     topic: Literal["general", "news", "finance"] = "general",
     include_raw_content: bool = False,
 ):
-    """Search the web using Tavily or DuckDuckGo for current information and documentation.
+    """Search the web using Tavily for current information and documentation.
 
     This tool searches the web and returns relevant results. After receiving results,
     you MUST synthesize the information into a natural, helpful response for the user.
-
-    Priority:
-    1. Tavily (if configured and has quota)
-    2. DuckDuckGo (free fallback, no API key required)
 
     Args:
         query: The search query (be specific and detailed)
@@ -158,47 +134,50 @@ def web_search(
     4. Cite sources by mentioning the page titles or URLs
     5. NEVER show the raw JSON to the user - always provide a formatted response
     """
-    # Try Tavily first if configured
-    if tavily_client is not None:
-        try:
-            return tavily_client.search(
-                query,
-                max_results=max_results,
-                include_raw_content=include_raw_content,
-                topic=topic,
-            )
-        except UsageLimitExceededError:
-            # Tavily quota exceeded, fall through to DuckDuckGo
-            pass
-        except (
-            requests.exceptions.RequestException,
-            ValueError,
-            TypeError,
-            # Tavily-specific exceptions
+    try:
+        import requests
+        from tavily import (
             BadRequestError,
-            ForbiddenError,
             InvalidAPIKeyError,
             MissingAPIKeyError,
-            TavilyTimeoutError,
-        ):
-            # Tavily failed, try DuckDuckGo
-            pass
-    
-    # Fallback to DuckDuckGo (free)
-    if DDGS_AVAILABLE:
-        try:
-            return _duckduckgo_search(query, max_results=max_results)
-        except Exception as e:
-            return {
-                "error": f"Web search error: DuckDuckGo failed ({e!s}). Tavily not configured or quota exceeded.",
-                "query": query,
-            }
-    
-    # No search available
-    return {
-        "error": "Web search not available. Please install 'duckduckgo-search' or configure TAVILY_API_KEY.",
-        "query": query,
-    }
+            UsageLimitExceededError,
+        )
+        from tavily.errors import ForbiddenError, TimeoutError as TavilyTimeoutError
+    except ImportError as exc:
+        return {
+            "error": f"Required package not installed: {exc.name}. "
+            "Install with: pip install 'deepagents[cli]'",
+            "query": query,
+        }
+
+    client = _get_tavily_client()
+    if client is None:
+        return {
+            "error": "Tavily API key not configured. "
+            "Please set TAVILY_API_KEY environment variable.",
+            "query": query,
+        }
+
+    try:
+        return client.search(
+            query,
+            max_results=max_results,
+            include_raw_content=include_raw_content,
+            topic=topic,
+        )
+    except (
+        requests.exceptions.RequestException,
+        ValueError,
+        TypeError,
+        # Tavily-specific exceptions
+        BadRequestError,
+        ForbiddenError,
+        InvalidAPIKeyError,
+        MissingAPIKeyError,
+        TavilyTimeoutError,
+        UsageLimitExceededError,
+    ) as e:
+        return {"error": f"Web search error: {e!s}", "query": query}
 
 
 def fetch_url(url: str, timeout: int = 30) -> dict[str, Any]:
@@ -226,6 +205,16 @@ def fetch_url(url: str, timeout: int = 30) -> dict[str, Any]:
     3. Synthesize this into a clear, natural language response
     4. NEVER show the raw markdown to the user unless specifically requested
     """
+    try:
+        import requests
+        from markdownify import markdownify
+    except ImportError as exc:
+        return {
+            "error": f"Required package not installed: {exc.name}. "
+            "Install with: pip install 'deepagents[cli]'",
+            "url": url,
+        }
+
     try:
         response = requests.get(
             url,

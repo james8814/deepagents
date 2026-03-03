@@ -93,7 +93,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, cast
 
 import yaml
 from langchain.agents.middleware.types import PrivateStateAttr
@@ -103,7 +103,6 @@ if TYPE_CHECKING:
 
 from collections.abc import Awaitable, Callable
 from typing import Literal, NotRequired
-from typing_extensions import TypedDict
 
 from langchain.agents.middleware.types import (
     AgentMiddleware,
@@ -111,12 +110,13 @@ from langchain.agents.middleware.types import (
     ModelRequest,
     ModelResponse,
 )
-from langchain_core.tools import StructuredTool
-from langgraph.types import Command
-from langchain_core.runnables import RunnableConfig
 from langchain_core.messages import ToolMessage
+from langchain_core.runnables import RunnableConfig
+from langchain_core.tools import StructuredTool
 from langgraph.prebuilt import ToolRuntime
 from langgraph.runtime import Runtime
+from langgraph.types import Command
+from typing_extensions import TypedDict
 
 from deepagents.middleware._utils import append_to_system_message
 
@@ -128,6 +128,7 @@ MAX_SKILL_FILE_SIZE = 10 * 1024 * 1024
 # Agent Skills specification constraints (https://agentskills.io/specification)
 MAX_SKILL_NAME_LENGTH = 64
 MAX_SKILL_DESCRIPTION_LENGTH = 1024
+MAX_SKILL_COMPATIBILITY_LENGTH = 500
 
 # V2: Resource type mapping for standard skill resource directories
 RESOURCE_TYPE_MAP: dict[str, Literal["script", "reference", "asset"]] = {
@@ -139,6 +140,7 @@ RESOURCE_TYPE_MAP: dict[str, Literal["script", "reference", "asset"]] = {
 
 class ResourceMetadata(TypedDict):
     """技能资源文件的元数据。用于延迟发现策略，缓存技能目录下的资源文件信息。"""
+
     path: str
     """资源文件在 backend 中的完整路径。"""
     type: Literal["script", "reference", "asset", "other"]
@@ -153,12 +155,12 @@ class ResourceMetadata(TypedDict):
 
 
 def _discover_resources(
-    backend: "BackendProtocol",
+    backend: BackendProtocol,
     skill_dir: str,
     skill_name: str,
-) -> list["ResourceMetadata"]:
+) -> list[ResourceMetadata]:
     """发现技能目录下的资源文件（同步版本）。扫描标准资源目录（仅第一层）。"""
-    resources: list["ResourceMetadata"] = []
+    resources: list[ResourceMetadata] = []
 
     try:
         items = backend.ls_info(skill_dir)
@@ -182,20 +184,19 @@ def _discover_resources(
             for sub_item in sub_items:
                 if not sub_item.get("is_dir"):
                     resources.append({"path": sub_item["path"], "type": resource_type, "skill_name": skill_name})
-        else:
-            if item_name != "SKILL.md":
-                resources.append({"path": item_path, "type": "other", "skill_name": skill_name})
+        elif item_name != "SKILL.md":
+            resources.append({"path": item_path, "type": "other", "skill_name": skill_name})
 
     return resources
 
 
 async def _adiscover_resources(
-    backend: "BackendProtocol",
+    backend: BackendProtocol,
     skill_dir: str,
     skill_name: str,
-) -> list["ResourceMetadata"]:
+) -> list[ResourceMetadata]:
     """发现技能目录下的资源文件（异步版本）。"""
-    resources: list["ResourceMetadata"] = []
+    resources: list[ResourceMetadata] = []
 
     try:
         items = await backend.als_info(skill_dir)
@@ -219,14 +220,13 @@ async def _adiscover_resources(
             for sub_item in sub_items:
                 if not sub_item.get("is_dir"):
                     resources.append({"path": sub_item["path"], "type": resource_type, "skill_name": skill_name})
-        else:
-            if item_name != "SKILL.md":
-                resources.append({"path": item_path, "type": "other", "skill_name": skill_name})
+        elif item_name != "SKILL.md":
+            resources.append({"path": item_path, "type": "other", "skill_name": skill_name})
 
     return resources
 
 
-def _format_resource_summary(resources: list["ResourceMetadata"]) -> str:
+def _format_resource_summary(resources: list[ResourceMetadata]) -> str:
     """格式化资源摘要，按类型分组。"""
     by_type: dict[str, int] = {}
     for r in resources:
@@ -235,7 +235,7 @@ def _format_resource_summary(resources: list["ResourceMetadata"]) -> str:
     return ", ".join(parts)
 
 
-def _format_skill_annotations(skill: "SkillMetadata") -> str:
+def _format_skill_annotations(skill: SkillMetadata) -> str:
     """Format optional skill annotations (license, compatibility)."""
     annotations = []
     if skill.get("license"):
@@ -244,6 +244,33 @@ def _format_skill_annotations(skill: "SkillMetadata") -> str:
         annotations.append(f"Compatibility: {skill['compatibility']}")
     return "; ".join(annotations) if annotations else ""
 
+
+def _validate_metadata(
+    raw: object,
+    skill_path: str,
+) -> dict[str, str]:
+    """Validate and normalize the metadata field from YAML frontmatter.
+
+    YAML `safe_load` can return any type for the `metadata` key. This
+    ensures the values in `SkillMetadata` are always a `dict[str, str]` by
+    coercing via `str()` and rejecting non-dict inputs.
+
+    Args:
+        raw: Raw value from `frontmatter_data.get("metadata", {})`.
+        skill_path: Path to the `SKILL.md` file (for warning messages).
+
+    Returns:
+        A validated `dict[str, str]`.
+    """
+    if not isinstance(raw, dict):
+        if raw:
+            logger.warning(
+                "Ignoring non-dict metadata in %s (got %s)",
+                skill_path,
+                type(raw).__name__,
+            )
+        return {}
+    return {str(k): str(v) for k, v in raw.items()}
 
 
 class SkillMetadata(TypedDict):
@@ -301,26 +328,38 @@ class SkillsStateUpdate(TypedDict):
 def _validate_skill_name(name: str, directory_name: str) -> tuple[bool, str]:
     """Validate skill name per Agent Skills specification.
 
-    Requirements per spec:
-    - Max 64 characters
-    - Lowercase alphanumeric and hyphens only (a-z, 0-9, -)
-    - Cannot start or end with hyphen
-    - No consecutive hyphens
-    - Must match parent directory name
+    Constraints per Agent Skills specification:
+
+    - 1-64 characters
+    - Unicode lowercase alphanumeric and hyphens only (`a-z` and `-`).
+    - Must not start or end with `-`
+    - Must not contain consecutive `--`
+    - Must match the parent directory name containing the `SKILL.md` file
+
+    Unicode lowercase alphanumeric means any character where `c.isalpha() and
+    c.islower()` or `c.isdigit()` returns `True`, which covers accented Latin
+    characters (e.g., `'café'`, `'über-tool'`) and other scripts.
 
     Args:
         name: Skill name from YAML frontmatter
         directory_name: Parent directory name
 
     Returns:
-        (is_valid, error_message) tuple. Error message is empty if valid.
+        `(is_valid, error_message)` tuple.
+
+            Error message is empty if valid.
     """
     if not name:
         return False, "name is required"
     if len(name) > MAX_SKILL_NAME_LENGTH:
         return False, "name exceeds 64 characters"
-    # Pattern: lowercase alphanumeric, single hyphens between segments, no start/end hyphen
-    if not re.match(r"^[a-z0-9]+(-[a-z0-9]+)*$", name):
+    if name.startswith("-") or name.endswith("-") or "--" in name:
+        return False, "name must be lowercase alphanumeric with single hyphens only"
+    for c in name:
+        if c == "-":
+            continue
+        if (c.isalpha() and c.islower()) or c.isdigit():
+            continue
         return False, "name must be lowercase alphanumeric with single hyphens only"
     if name != directory_name:
         return False, f"name '{name}' must match directory name '{directory_name}'"
@@ -370,9 +409,9 @@ def _parse_skill_metadata(
         logger.warning("Skipping %s: frontmatter is not a mapping", skill_path)
         return None
 
-    # Validate required fields
-    name = frontmatter_data.get("name")
-    description = frontmatter_data.get("description")
+    # Validate required fields (strip first to handle whitespace-only values)
+    name = str(frontmatter_data.get("name", "")).strip()
+    description = str(frontmatter_data.get("description", "")).strip()
 
     if not name or not description:
         logger.warning("Skipping %s: missing required 'name' or 'description'", skill_path)
@@ -388,8 +427,8 @@ def _parse_skill_metadata(
             error,
         )
 
-    # Validate description length per spec (max 1024 chars)
-    description_str = str(description).strip()
+    # Validate description length per spec (max 1024 chars) - already stripped above
+    description_str = description
     if len(description_str) > MAX_SKILL_DESCRIPTION_LENGTH:
         logger.warning(
             "Description exceeds %d characters in %s, truncating",
@@ -398,18 +437,41 @@ def _parse_skill_metadata(
         )
         description_str = description_str[:MAX_SKILL_DESCRIPTION_LENGTH]
 
-    if frontmatter_data.get("allowed-tools"):
-        allowed_tools = frontmatter_data.get("allowed-tools").split(" ")
+    # Handle allowed-tools: can be a list or a space-separated string
+    allowed_tools_raw = frontmatter_data.get("allowed-tools")
+    if allowed_tools_raw:
+        if isinstance(allowed_tools_raw, list):
+            allowed_tools = [str(t) for t in allowed_tools_raw]
+        else:
+            # Split by whitespace and filter out empty strings
+            allowed_tools = [t for t in str(allowed_tools_raw).split(" ") if t]
     else:
         allowed_tools = []
+
+    # Handle license: ensure it's a string before calling strip()
+    license_raw = frontmatter_data.get("license", "")
+    if isinstance(license_raw, bool):
+        license_str = None
+    else:
+        license_str = str(license_raw).strip() or None
+
+    # Handle compatibility: truncate to MAX_SKILL_COMPATIBILITY_LENGTH per spec
+    compatibility_str = str(frontmatter_data.get("compatibility", "")).strip() or None
+    if compatibility_str and len(compatibility_str) > MAX_SKILL_COMPATIBILITY_LENGTH:
+        logger.warning(
+            "Compatibility exceeds %d characters in %s, truncating",
+            MAX_SKILL_COMPATIBILITY_LENGTH,
+            skill_path,
+        )
+        compatibility_str = compatibility_str[:MAX_SKILL_COMPATIBILITY_LENGTH]
 
     return SkillMetadata(
         name=str(name),
         description=description_str,
         path=skill_path,
-        metadata=frontmatter_data.get("metadata", {}),
-        license=frontmatter_data.get("license", "").strip() or None,
-        compatibility=frontmatter_data.get("compatibility", "").strip() or None,
+        metadata=_validate_metadata(frontmatter_data.get("metadata", {}), skill_path),
+        license=license_str,
+        compatibility=compatibility_str,
         allowed_tools=allowed_tools,
     )
 
@@ -681,17 +743,19 @@ class SkillsMiddleware(AgentMiddleware):
                 config=config,
                 tool_call_id=None,
             )
-            backend = self._backend(tool_runtime)
+            backend_factory = cast("Callable[[ToolRuntime], BackendProtocol]", self._backend)
+            backend = backend_factory(cast("ToolRuntime", tool_runtime))
             if backend is None:
                 raise AssertionError("SkillsMiddleware requires a valid backend instance")
             return backend
 
         return self._backend
 
-    def _get_backend_from_runtime(self, runtime: "ToolRuntime[None, SkillsState]") -> "BackendProtocol":
+    def _get_backend_from_runtime(self, runtime: ToolRuntime[None, SkillsState]) -> BackendProtocol:
         """从 ToolRuntime 中解析 backend 实例，用于工具函数中。"""
         if callable(self._backend):
-            return self._backend(runtime)
+            backend_factory = cast("Callable[[ToolRuntime], BackendProtocol]", self._backend)
+            return backend_factory(cast("ToolRuntime", runtime))
         return self._backend
 
     def _format_skills_locations(self) -> str:
@@ -707,7 +771,7 @@ class SkillsMiddleware(AgentMiddleware):
         self,
         skills: list[SkillMetadata],
         loaded: list[str],
-        resources: dict[str, list["ResourceMetadata"]],
+        resources: dict[str, list[ResourceMetadata]],
     ) -> str:
         """Format skills metadata for display in system prompt (V2 enhanced)."""
         if not skills:
@@ -767,7 +831,7 @@ class SkillsMiddleware(AgentMiddleware):
 
         return request.override(system_message=new_system_message)
 
-    def before_agent(self, state: SkillsState, runtime: Runtime, config: RunnableConfig) -> SkillsStateUpdate | None:
+    def before_agent(self, state: SkillsState, runtime: Runtime, config: RunnableConfig) -> SkillsStateUpdate | None:  # ty: ignore[invalid-method-override]
         """Load skills metadata before agent execution (synchronous).
 
         Runs before each agent interaction to discover available skills from all
@@ -806,7 +870,7 @@ class SkillsMiddleware(AgentMiddleware):
             skill_resources={},
         )
 
-    async def abefore_agent(self, state: SkillsState, runtime: Runtime, config: RunnableConfig) -> SkillsStateUpdate | None:
+    async def abefore_agent(self, state: SkillsState, runtime: Runtime, config: RunnableConfig) -> SkillsStateUpdate | None:  # ty: ignore[invalid-method-override]
         """Load skills metadata before agent execution (async).
 
         Runs before each agent interaction to discover available skills from all
@@ -883,20 +947,21 @@ class SkillsMiddleware(AgentMiddleware):
     # V2: Tool methods for skill lifecycle management
     # ==========================================================================
 
-    def _create_load_skill_tool(self) -> "StructuredTool":
+    def _create_load_skill_tool(self) -> StructuredTool:
         """创建 load_skill 工具。"""
+
         def sync_load_skill(
             skill_name: str,
-            runtime: "ToolRuntime[None, SkillsState]",
-        ) -> "Command | str":
+            runtime: ToolRuntime[None, SkillsState],
+        ) -> Command | str:
             """Load a skill's full instructions and discover its resources."""
             backend = self._get_backend_from_runtime(runtime)
             return self._execute_load_skill(backend, skill_name, runtime)
 
         async def async_load_skill(
             skill_name: str,
-            runtime: "ToolRuntime[None, SkillsState]",
-        ) -> "Command | str":
+            runtime: ToolRuntime[None, SkillsState],
+        ) -> Command | str:
             """Load a skill's full instructions and discover its resources (async)."""
             backend = self._get_backend_from_runtime(runtime)
             return await self._aexecute_load_skill(backend, skill_name, runtime)
@@ -910,10 +975,10 @@ class SkillsMiddleware(AgentMiddleware):
 
     def _execute_load_skill(
         self,
-        backend: "BackendProtocol",
+        backend: BackendProtocol,
         skill_name: str,
-        runtime: "ToolRuntime[None, SkillsState]",
-    ) -> "Command | str":
+        runtime: ToolRuntime[None, SkillsState],
+    ) -> Command | str:
         """load_skill 核心逻辑（同步版本）。"""
         state = runtime.state
         skills_metadata = state.get("skills_metadata", [])
@@ -958,6 +1023,7 @@ class SkillsMiddleware(AgentMiddleware):
 
         if skill_name not in skill_resources:
             from pathlib import PurePosixPath
+
             skill_dir = str(PurePosixPath(target_skill["path"]).parent)
             skill_resources[skill_name] = _discover_resources(backend, skill_dir, skill_name)
 
@@ -982,10 +1048,10 @@ class SkillsMiddleware(AgentMiddleware):
 
     async def _aexecute_load_skill(
         self,
-        backend: "BackendProtocol",
+        backend: BackendProtocol,
         skill_name: str,
-        runtime: "ToolRuntime[None, SkillsState]",
-    ) -> "Command | str":
+        runtime: ToolRuntime[None, SkillsState],
+    ) -> Command | str:
         """load_skill 核心逻辑（异步版本）。"""
         state = runtime.state
         skills_metadata = state.get("skills_metadata", [])
@@ -1029,6 +1095,7 @@ class SkillsMiddleware(AgentMiddleware):
 
         if skill_name not in skill_resources:
             from pathlib import PurePosixPath
+
             skill_dir = str(PurePosixPath(target_skill["path"]).parent)
             skill_resources[skill_name] = await _adiscover_resources(backend, skill_dir, skill_name)
 
@@ -1050,19 +1117,20 @@ class SkillsMiddleware(AgentMiddleware):
             },
         )
 
-    def _create_unload_skill_tool(self) -> "StructuredTool":
+    def _create_unload_skill_tool(self) -> StructuredTool:
         """创建 unload_skill 工具。"""
+
         def sync_unload_skill(
             skill_name: str,
-            runtime: "ToolRuntime[None, SkillsState]",
-        ) -> "Command | str":
+            runtime: ToolRuntime[None, SkillsState],
+        ) -> Command | str:
             """Unload a previously loaded skill to free up a loading slot."""
             return self._execute_unload_skill(skill_name, runtime)
 
         async def async_unload_skill(
             skill_name: str,
-            runtime: "ToolRuntime[None, SkillsState]",
-        ) -> "Command | str":
+            runtime: ToolRuntime[None, SkillsState],
+        ) -> Command | str:
             """Unload a previously loaded skill to free up a loading slot (async)."""
             return self._execute_unload_skill(skill_name, runtime)
 
@@ -1076,15 +1144,15 @@ class SkillsMiddleware(AgentMiddleware):
     def _execute_unload_skill(
         self,
         skill_name: str,
-        runtime: "ToolRuntime[None, SkillsState]",
-    ) -> "Command | str":
+        runtime: ToolRuntime[None, SkillsState],
+    ) -> Command | str:
         """unload_skill 核心逻辑（同步/异步共用，不涉及 I/O）。"""
         state = runtime.state
         loaded_skills = list(state.get("skills_loaded", []))
         skill_resources = dict(state.get("skill_resources", {}))
 
         if skill_name not in loaded_skills:
-            loaded_list = ', '.join(loaded_skills) if loaded_skills else '(none)'
+            loaded_list = ", ".join(loaded_skills) if loaded_skills else "(none)"
             return f"Error: Skill '{skill_name}' is not currently loaded. Currently loaded skills: {loaded_list}."
 
         loaded_skills.remove(skill_name)
@@ -1112,5 +1180,4 @@ class SkillsMiddleware(AgentMiddleware):
         )
 
 
-
-__all__ = ["SkillMetadata", "SkillsMiddleware", "ResourceMetadata"]
+__all__ = ["ResourceMetadata", "SkillMetadata", "SkillsMiddleware"]

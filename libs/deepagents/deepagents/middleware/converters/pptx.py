@@ -35,7 +35,7 @@ class PPTXConverter(BaseConverter):
 
         start = time.time()
 
-        prs = Presentation(path)
+        prs = Presentation(str(path))
         parts = []
 
         for i, slide in enumerate(prs.slides, start=1):
@@ -98,13 +98,11 @@ class PPTXConverter(BaseConverter):
 
         start = time.time()
 
-        prs = Presentation(path)
+        prs = Presentation(str(path))
         total_slides = len(prs.slides)
 
         if page < 1 or page > total_slides:
-            raise ValueError(
-                f"Slide {page} out of range. Presentation has {total_slides} slides."
-            )
+            raise ValueError(f"Slide {page} out of range. Presentation has {total_slides} slides.")
 
         slide = prs.slides[page - 1]
         slide_parts = [f"# Slide {page}/{total_slides}\n"]
@@ -146,7 +144,7 @@ class PPTXConverter(BaseConverter):
         """
         from pptx import Presentation
 
-        prs = Presentation(path)
+        prs = Presentation(str(path))
         return len(prs.slides)
 
     def _convert_table(self, table) -> str:
@@ -160,10 +158,7 @@ class PPTXConverter(BaseConverter):
         """
         rows = []
         for row_idx in range(len(table.rows)):
-            cells = [
-                table.cell(row_idx, col_idx).text.strip()
-                for col_idx in range(len(table.columns))
-            ]
+            cells = [table.cell(row_idx, col_idx).text.strip() for col_idx in range(len(table.columns))]
             rows.append(cells)
 
         if not rows:
