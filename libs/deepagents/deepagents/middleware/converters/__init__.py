@@ -5,12 +5,12 @@ This package provides converters that transform various file formats
 
 Example:
     ```python
-    from deepagents.middleware.converters import PDFConverter, detect_mime_type
+    from deepagents.middleware.converters import DEFAULT_CONVERTER_REGISTRY, detect_mime_type
 
     # Detect file type
     mime_type = detect_mime_type("/uploads/report.pdf")
 
-    # Get converter
+    # Get converter from registry
     converter = DEFAULT_CONVERTER_REGISTRY.get(mime_type)
 
     # Convert to Markdown

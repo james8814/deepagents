@@ -408,7 +408,7 @@ def _upload_single_to_state(
                     is_overwrite = True
                     # P1 Fix: Calculate size in bytes, not characters
                     previous_size = len(response.content)
-                    logger.warning(f"Overwriting existing file: {path}")
+                    logger.warning("Overwriting existing file: %s", path)
         except Exception:
             # File doesn't exist or other error, continue
             pass
@@ -437,7 +437,7 @@ def _upload_single_to_state(
         )
 
     except Exception as e:
-        logger.exception(f"State write failed for {path}: {e}")
+        logger.exception("State write failed for %s: %s", path, e)
         return UploadResult(
             path=path,
             success=False,
