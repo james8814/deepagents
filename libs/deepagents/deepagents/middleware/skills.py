@@ -703,6 +703,7 @@ class SkillsMiddleware(AgentMiddleware):
         backend: BACKEND_TYPES,
         sources: list[str],
         max_loaded_skills: int = 10,
+        expose_dynamic_tools: bool = False,
     ) -> None:
         """Initialize the skills middleware.
 
@@ -711,16 +712,21 @@ class SkillsMiddleware(AgentMiddleware):
                      Use a factory for StateBackend: `lambda rt: StateBackend(rt)`
             sources: List of skill source paths (e.g., ["/skills/user/", "/skills/project/"]).
             max_loaded_skills: Maximum number of simultaneously loaded skills. Defaults to 10.
+            expose_dynamic_tools: Whether to expose load_skill/unload_skill tools for dynamic skill management. Defaults to False (tools not exposed).
         """
         self._backend = backend
         self.sources = sources
         self.system_prompt_template = SKILLS_SYSTEM_PROMPT
         self._max_loaded_skills = max_loaded_skills
-        # V2: Create tools for skill lifecycle management
-        self.tools = [
-            self._create_load_skill_tool(),
-            self._create_unload_skill_tool(),
-        ]
+        self._expose_dynamic_tools = expose_dynamic_tools
+        # V2: Create tools for skill lifecycle management (only if exposed)
+        if self._expose_dynamic_tools:
+            self.tools = [
+                self._create_load_skill_tool(),
+                self._create_unload_skill_tool(),
+            ]
+        else:
+            self.tools = []
 
     def _get_backend(self, state: SkillsState, runtime: Runtime, config: RunnableConfig) -> BackendProtocol:
         """Resolve backend from instance or factory.
