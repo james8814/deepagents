@@ -2,7 +2,7 @@
 
 ## 背景与问题摘要
 - 外部项目在接入 DeepAgents 时，报告了 5 个“Skills 动态加载”相关失败用例：来自 `test_e2e_v2.py`（3 个）与 `test_v2_dynamic_loading.py`（2 个）。
-- 失败原因：测试期望存在 `_create_load_skill_tool` / `_create_unload_skill_tool` 方法，以及 `max_loaded_skills` 参数。这些属于“v2 动态加载 API”的能力，但旧版框架未对外提供。
+- 失败原因：测试期望存在 `_create_load_skill_tool` / `_create_unload_skill_tool` 方法，以及 `max_loaded_skills` 参数。这些属于“V2 动态加载 API”的能力，但旧版框架未对外提供。
 - 影响：不影响现有“声明式技能注入”（基于路径的技能加载）；仅影响外部项目中“前瞻性动态加载”测试。
 
 ## 根因定位
@@ -107,7 +107,7 @@ pytestmark = pytest.mark.skipif(
 - 与已有系统提示整合：已加载技能显示 `[Loaded]`，不额外注入全文，保持上下文可控。
 
 ## 常见问题
-**Q：和“v2 原版”的接口名字不一致怎么办？**
+**Q：和“V2 原版”的接口名字不一致怎么办？**
 A：对外公开的是工具名 `load_skill` / `unload_skill`；外部项目无需也不应依赖任何私有名称（如 `_create_*`）。如需对接已有测试，可在测试中调用工具名，或使用上文 gating 控制。
 
 **Q：如何限制加载过多技能导致模型分心？**
