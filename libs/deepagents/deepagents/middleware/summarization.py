@@ -1,56 +1,54 @@
-"""Summarization middleware for offloading conversation history.
+"""Summarization middleware for automatic and tool-based conversation compaction.
 
-Persists conversation history to a backend prior to summarization, enabling retrieval of
-full context if needed later by an agent.
+This module provides two middleware classes:
+
+- `SummarizationMiddleware` — automatically compacts the conversation when token
+    usage exceeds a configurable threshold.
+
+    Older messages are summarized via an LLM call and the full history is
+    offloaded to a backend for later retrieval.
+- `SummarizationToolMiddleware` — exposes a `compact_conversation` tool that
+    lets the agent (or a human-in-the-loop approval flow) trigger compaction on
+    demand.
+
+    Composes with a `SummarizationMiddleware` instance and reuses its
+    summarization engine.
 
 ## Usage
 
 ```python
 from deepagents import create_deep_agent
-from deepagents.middleware.summarization import SummarizationMiddleware
+from deepagents.middleware.summarization import (
+    SummarizationMiddleware,
+    SummarizationToolMiddleware,
+)
 from deepagents.backends import FilesystemBackend
 
 backend = FilesystemBackend(root_dir="/data")
 
-middleware = SummarizationMiddleware(
+summ = SummarizationMiddleware(
     model="gpt-4o-mini",
     backend=backend,
     trigger=("fraction", 0.85),
     keep=("fraction", 0.10),
 )
+tool_mw = SummarizationToolMiddleware(summ)
 
-agent = create_deep_agent(middleware=[middleware])
+agent = create_deep_agent(middleware=[summ, tool_mw])
 ```
 
 ## Storage
 
 Offloaded messages are stored as markdown at `/conversation_history/{thread_id}.md`.
 
-Each summarization event appends a new section to this file, creating a running log
-of all evicted messages.
-
-## Sandbox Environments
-
-In sandbox environments (Daytona, Modal, Runloop), only specific paths may be writable.
-Use `CompositeBackend` to map `/conversation_history/` to a writable location:
-
-```python
-from deepagents.backends import CompositeBackend
-
-backend = CompositeBackend(
-    default=sandbox_backend,
-    mounts={
-        "/conversation_history/": sandbox_backend,  # Maps to sandbox's writable path
-    },
-)
-```
+Each summarization event appends a new section to this file, creating a running
+lo of all evicted messages.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import uuid
 import warnings
 from datetime import UTC, datetime
@@ -90,79 +88,12 @@ logger = logging.getLogger(__name__)
 
 SUMMARIZATION_SYSTEM_PROMPT = """## Compact conversation Tool `compact_conversation`
 
-You have access to a `compact_conversation` tool. This tool refreshes your context
-window to reduce context bloat and costs.
+You have access to a `compact_conversation` tool. This tool refreshes your context window to reduce context bloat and costs.
 
 You should use the tool when:
-- The user asks to move on to a completely new task for which previous context is likely
-irrelevant.
-- You have finished extracting or synthesizing a result and previous working context is
-no longer needed.
+- The user asks to move on to a completely new task for which previous context is likely irrelevant.
+- You have finished extracting or synthesizing a result and previous working context is no longer needed.
 """
-
-
-# =============================================================================
-# Environment variables for fallback summarization settings
-# These are used when the model has no profile with max_input_tokens
-# =============================================================================
-
-ENV_FALLBACK_TRIGGER_TOKENS = "DEEPAGENTS_FALLBACK_TRIGGER_TOKENS"
-ENV_FALLBACK_KEEP_MESSAGES = "DEEPAGENTS_FALLBACK_KEEP_MESSAGES"
-ENV_FALLBACK_TRIGGER_MESSAGES = "DEEPAGENTS_FALLBACK_TRIGGER_MESSAGES"
-
-# Default fallback values (used when environment variables are not set)
-# These are intentionally conservative to prevent context overflow
-DEFAULT_FALLBACK_TRIGGER_TOKENS = 100_000  # Safer than original 170,000
-DEFAULT_FALLBACK_KEEP_MESSAGES = 6
-DEFAULT_FALLBACK_TRIGGER_MESSAGES = 20
-
-
-def _get_fallback_trigger_tokens() -> int:
-    """Get fallback trigger tokens from environment variable or use default."""
-    env_value = os.environ.get(ENV_FALLBACK_TRIGGER_TOKENS)
-    if env_value:
-        try:
-            return int(env_value)
-        except ValueError:
-            logger.warning(
-                "Invalid %s value '%s', using default %d",
-                ENV_FALLBACK_TRIGGER_TOKENS,
-                env_value,
-                DEFAULT_FALLBACK_TRIGGER_TOKENS,
-            )
-    return DEFAULT_FALLBACK_TRIGGER_TOKENS
-
-
-def _get_fallback_keep_messages() -> int:
-    """Get fallback keep messages from environment variable or use default."""
-    env_value = os.environ.get(ENV_FALLBACK_KEEP_MESSAGES)
-    if env_value:
-        try:
-            return int(env_value)
-        except ValueError:
-            logger.warning(
-                "Invalid %s value '%s', using default %d",
-                ENV_FALLBACK_KEEP_MESSAGES,
-                env_value,
-                DEFAULT_FALLBACK_KEEP_MESSAGES,
-            )
-    return DEFAULT_FALLBACK_KEEP_MESSAGES
-
-
-def _get_fallback_trigger_messages() -> int:
-    """Get fallback trigger messages from environment variable or use default."""
-    env_value = os.environ.get(ENV_FALLBACK_TRIGGER_MESSAGES)
-    if env_value:
-        try:
-            return int(env_value)
-        except ValueError:
-            logger.warning(
-                "Invalid %s value '%s', using default %d",
-                ENV_FALLBACK_TRIGGER_MESSAGES,
-                env_value,
-                DEFAULT_FALLBACK_TRIGGER_MESSAGES,
-            )
-    return DEFAULT_FALLBACK_TRIGGER_MESSAGES
 
 
 class SummarizationEvent(TypedDict):
@@ -180,13 +111,27 @@ class SummarizationEvent(TypedDict):
 
 
 class TruncateArgsSettings(TypedDict, total=False):
-    """Settings for truncating large tool arguments in old messages.
+    """Settings for truncating large tool-call arguments in older messages.
 
-    Attributes:
-        trigger: Threshold to trigger argument truncation. If None, truncation is disabled.
-        keep: Context retention policy for message truncation (defaults to last 20 messages).
-        max_length: Maximum character length for tool arguments before truncation (defaults to 2000).
-        truncation_text: Text to replace truncated arguments with (defaults to "...(argument truncated)").
+    This is a lightweight, pre-summarization optimization that fires at a lower
+    token threshold than full conversation compaction. When triggered, only the
+    `args` values on `AIMessage.tool_calls` in messages *before* the keep window
+    are shortened — recent messages are left intact.
+
+    Typical large arguments include `write_file` content, `edit_file` patches,
+    and verbose `execute` outputs.
+
+    Args:
+        trigger: Token/message/fraction threshold that activates truncation.
+
+            Uses the same `ContextSize` format as the summarization trigger.
+
+            If `None`, truncation is disabled.
+        keep: How many recent messages (or tokens/fraction of context) to
+            leave untouched.
+        max_length: Character limit per argument value before it is clipped.
+        truncation_text: Replacement suffix appended after the first 20
+            characters of a truncated argument.
     """
 
     trigger: ContextSize | None
@@ -221,9 +166,8 @@ def compute_summarization_defaults(model: BaseChatModel) -> SummarizationDefault
 
     Returns:
         Default settings for trigger, keep, and truncate_args_settings.
-        If the model has a profile with max_input_tokens, uses fraction-based
-        settings. Otherwise, uses fallback values from environment variables
-        or conservative defaults.
+            If the model has a profile with `max_input_tokens`, uses
+            fraction-based settings. Otherwise, uses fixed token/message counts.
     """
     has_profile = (
         model.profile is not None
@@ -242,29 +186,14 @@ def compute_summarization_defaults(model: BaseChatModel) -> SummarizationDefault
             },
         }
 
-    # No profile available - use fallback values from environment variables
-    trigger_tokens = _get_fallback_trigger_tokens()
-    keep_messages = _get_fallback_keep_messages()
-    trigger_messages = _get_fallback_trigger_messages()
-
-    # Emit warning to help users diagnose potential issues
-    model_name = getattr(model, "model_name", getattr(model, "model", "unknown"))
-    logger.warning(
-        "Model '%s' has no profile with max_input_tokens. "
-        "Using fallback summarization settings: trigger=%d tokens, keep=%d messages. "
-        "To fix: set MODEL_MAX_INPUT_TOKENS environment variable, "
-        "or adjust fallback via DEEPAGENTS_FALLBACK_TRIGGER_TOKENS.",
-        model_name,
-        trigger_tokens,
-        keep_messages,
-    )
-
+    # Defaults for models without profile info are more conservative to avoid
+    # overshooting context limits.
     return {
-        "trigger": ("tokens", trigger_tokens),
-        "keep": ("messages", keep_messages),
+        "trigger": ("tokens", 170000),
+        "keep": ("messages", 6),
         "truncate_args_settings": {
-            "trigger": ("messages", trigger_messages),
-            "keep": ("messages", keep_messages),
+            "trigger": ("messages", 20),
+            "keep": ("messages", 20),
         },
     }
 
@@ -317,9 +246,6 @@ class _DeepAgentsSummarizationMiddleware(AgentMiddleware):
                     # Truncate when 50% of context window reached, ignoring messages in last 10% of window
                     {"trigger": ("fraction", 0.5), "keep": ("fraction", 0.1), "max_length": 2000, "truncation_text": "...(truncated)"}
             history_path_prefix: Path prefix for storing conversation history.
-
-                Defaults to `/conversation_history`. For sandbox environments,
-                use CompositeBackend to map this path to a writable location.
 
         Example:
             ```python
@@ -1144,6 +1070,39 @@ A condensed summary follows:
 
 # Public alias
 SummarizationMiddleware = _DeepAgentsSummarizationMiddleware
+
+
+def create_summarization_middleware(
+    model: BaseChatModel,
+    backend: BACKEND_TYPES,
+) -> _DeepAgentsSummarizationMiddleware:
+    """Create a `SummarizationMiddleware` with model-aware defaults.
+
+    Computes trigger, keep, and truncation settings from the model's profile
+    (or uses fixed-token fallbacks) and returns a configured middleware.
+
+    Args:
+        model: Resolved chat model instance.
+        backend: Backend instance or factory for persisting conversation history.
+
+    Returns:
+        Configured `SummarizationMiddleware` instance.
+    """
+    from langchain.chat_models import BaseChatModel as RuntimeBaseChatModel  # noqa: PLC0415
+
+    if not isinstance(model, RuntimeBaseChatModel):
+        msg = "`create_summarization_middleware` expects `model` to be a `BaseChatModel` instance."
+        raise TypeError(msg)
+
+    defaults = compute_summarization_defaults(model)
+    return SummarizationMiddleware(
+        model=model,
+        backend=backend,
+        trigger=defaults["trigger"],
+        keep=defaults["keep"],
+        trim_tokens_to_summarize=None,
+        truncate_args_settings=defaults["truncate_args_settings"],
+    )
 
 
 class SummarizationToolMiddleware(AgentMiddleware):

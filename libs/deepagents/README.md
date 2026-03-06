@@ -16,9 +16,6 @@ LangSmith is a unified developer platform for building, testing, and monitoring 
 pip install deepagents
 # or
 uv add deepagents
-
-# With file format support (PDF, Word, Excel, PowerPoint)
-pip install "deepagents[converters]"
 ```
 
 ## 🤔 What is this?
@@ -28,15 +25,6 @@ Using an LLM to call tools in a loop is the simplest form of an agent. This arch
 Applications like "Deep Research", "Manus", and "Claude Code" have gotten around this limitation by implementing a combination of four things: a **planning tool**, **sub agents**, access to a **file system**, and a **detailed prompt**.
 
 `deepagents` is a Python package that implements these in a general purpose way so that you can easily create a Deep Agent for your application. For a full overview and quickstart of Deep Agents, the best resource is our [docs](https://docs.langchain.com/oss/python/deepagents/overview).
-
-### Key Features
-
-- **Planning** — `write_todos` / `read_todos` for task breakdown and progress tracking
-- **Filesystem** — `read_file`, `write_file`, `edit_file`, `ls`, `glob`, `grep` for reading and writing context
-- **Universal File Reader** — Read PDF, Word, Excel, PowerPoint, and more with automatic format conversion
-- **Shell access** — `execute` for running commands (with sandboxing)
-- **Sub-agents** — `task` for delegating work with isolated context windows
-- **Context management** — Auto-summarization when conversations get long
 
 **Acknowledgements: This project was primarily inspired by Claude Code, and initially was largely an attempt to see what made Claude Code general purpose, and make it even more so.**
 

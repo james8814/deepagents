@@ -228,6 +228,7 @@ def _load_seed_messages() -> list[AnyMessage]:
     return load(run.outputs["messages"])
 
 
+@pytest.mark.skip(reason="Requires permissions to read ls_client.read_run")
 @pytest.mark.langsmith
 def test_compact_tool_new_task(tmp_path: Path, model: BaseChatModel, model_name: str) -> None:
 
@@ -243,6 +244,7 @@ def test_compact_tool_new_task(tmp_path: Path, model: BaseChatModel, model_name:
     assert _called_compact(trajectory)
 
 
+@pytest.mark.skip(reason="Requires permissions to read ls_client.read_run")
 @pytest.mark.langsmith
 def test_compact_tool_not_overly_sensitive(tmp_path: Path, model: BaseChatModel, model_name: str) -> None:
 
@@ -258,6 +260,7 @@ def test_compact_tool_not_overly_sensitive(tmp_path: Path, model: BaseChatModel,
     assert not _called_compact(trajectory)
 
 
+@pytest.mark.skip(reason="Requires permissions to read ls_client.read_run")
 @pytest.mark.langsmith
 def test_compact_tool_large_reads(tmp_path: Path, model: BaseChatModel, model_name: str) -> None:
     another_large_file = "https://raw.githubusercontent.com/langchain-ai/deepagents/5c90376c02754c67d448908e55d1e953f54b8acd/libs/deepagents/deepagents/middleware/filesystem.py"
