@@ -265,6 +265,7 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
                 PatchToolCallsMiddleware(),
             ]
             subagent_skills = spec.get("skills")
+            subagent_skills_allowlist = spec.get("skills_allowlist")
             user_spec_middleware = list(spec.get("middleware", []))
             if subagent_skills:
                 # Skip default injection if user already provided a SkillsMiddleware
@@ -275,6 +276,7 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
                             backend=backend,
                             sources=subagent_skills,
                             expose_dynamic_tools=skills_expose_dynamic_tools,
+                            allowed_skills=subagent_skills_allowlist,
                         )
                     )
             subagent_middleware.extend(user_spec_middleware)

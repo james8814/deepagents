@@ -54,6 +54,39 @@ agent = create_deep_agent(
 
 如果某个 SubAgent 需要独立控制，可在该 SubAgent 的 `middleware` 中自行注入 `SkillsMiddleware`，框架将自动跳过默认注入，避免重复。
 
+### 1.2 名称级 allowlist（按 SubAgent 精准可见）
+
+除了目录级控制（`skills=[...]`），你可以为某个 SubAgent 指定“名称级 allowlist”，让该 SubAgent 仅看到并可加载被列入名单的技能。这样可以保证不同 SubAgent 的能力边界更清晰，系统提示更聚焦。
+
+```python
+from deepagents import create_deep_agent
+
+agent = create_deep_agent(
+    model="openai:gpt-4o-mini",
+    skills=["/skills/user", "/skills/project"],  # 目录级来源仍然有效
+    subagents=[
+        {
+            "name": "research_agent",
+            "description": "Research focused agent",
+            "system_prompt": "...",
+            "skills": ["/skills/user", "/skills/project"],
+            "skills_allowlist": ["web-research", "source-eval", "outline", "note-take"],
+        },
+        {
+            "name": "analysis_agent",
+            "description": "Analysis focused agent",
+            "system_prompt": "...",
+            "skills": ["/skills/user", "/skills/project"],
+            "skills_allowlist": ["code-review", "test-plan", "security-audit", "perf-check", "api-trace", "db-inspect"],
+        },
+    ],
+)
+```
+
+- allowlist 中的名称需与技能 frontmatter 的 `name` 字段一致（小写连字符）。
+- 不设置 `skills_allowlist` 时行为保持兼容：SubAgent 将看到来源目录下全部技能。
+- 若需要主 Agent 也做全局收敛，可手动在 `middleware` 中注入自定义的 `SkillsMiddleware(allowed_skills=[...])`。
+
 ### 2. 关键参数说明
 
 | 参数 | 类型 | 默认值 | 说明 |

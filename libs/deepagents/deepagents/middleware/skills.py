@@ -699,6 +699,7 @@ class SkillsMiddleware(AgentMiddleware):
         sources: list[str],
         max_loaded_skills: int = 10,
         expose_dynamic_tools: bool = False,
+        allowed_skills: list[str] | None = None,
     ) -> None:
         """Initialize the skills middleware.
 
@@ -708,12 +709,16 @@ class SkillsMiddleware(AgentMiddleware):
             sources: List of skill source paths (e.g., ["/skills/user/", "/skills/project/"]).
             max_loaded_skills: Maximum number of simultaneously loaded skills. Defaults to 10.
             expose_dynamic_tools: Whether to expose load_skill/unload_skill tools for dynamic skill management. Defaults to False (tools not exposed).
+            allowed_skills: Optional allowlist of skill names visible to this agent.
+                If provided, only these skill names will be listed and loadable.
+                Names must match the `name` field in each skill's YAML frontmatter.
         """
         self._backend = backend
         self.sources = sources
         self.system_prompt_template = SKILLS_SYSTEM_PROMPT
         self._max_loaded_skills = max_loaded_skills
         self._expose_dynamic_tools = expose_dynamic_tools
+        self._allowed_skills = {s.strip().lower() for s in allowed_skills} if allowed_skills else None
         # V2: Create tools for skill lifecycle management (only if exposed)
         if self._expose_dynamic_tools:
             self.tools = [
@@ -866,6 +871,8 @@ class SkillsMiddleware(AgentMiddleware):
                 all_skills[skill["name"]] = skill
 
         skills = list(all_skills.values())
+        if self._allowed_skills is not None:
+            skills = [s for s in skills if s["name"].lower() in self._allowed_skills]
         return SkillsStateUpdate(
             skills_metadata=skills,
             skills_loaded=[],
@@ -905,6 +912,8 @@ class SkillsMiddleware(AgentMiddleware):
                 all_skills[skill["name"]] = skill
 
         skills = list(all_skills.values())
+        if self._allowed_skills is not None:
+            skills = [s for s in skills if s["name"].lower() in self._allowed_skills]
         return SkillsStateUpdate(
             skills_metadata=skills,
             skills_loaded=[],

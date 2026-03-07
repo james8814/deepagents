@@ -118,6 +118,8 @@ ignore-var-parameters = true
     "PT018",   # Assertion should be broken down into multiple parts
     "S101",    # Use of `assert` detected
     "S311",    # Pseudo-random generator not suitable for security — fine in tests
+    "EXE002",  # Executable file without shebang — tests shouldn't be executable
+    "SIM102",  # Nested if in tests — readability isn't critical here
 ]
 # Scripts: allow prints, broad exceptions, and standalone modules
 "scripts/**" = [

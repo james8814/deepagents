@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Middleware for providing subagents to an agent via a `task` tool."""
 
 import warnings
@@ -76,6 +77,9 @@ class SubAgent(TypedDict):
 
     skills: NotRequired[list[str]]
     """Skill source paths for SkillsMiddleware."""
+
+    skills_allowlist: NotRequired[list[str]]
+    """Optional allowlist of skill names visible to this subagent."""
 
 
 class CompiledSubAgent(TypedDict):
