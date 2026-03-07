@@ -1,7 +1,7 @@
 # 外部团队 API 使用指南
 
-**版本**: 1.0.0  
-**日期**: 2026-03-06  
+**版本**: 1.0.0
+**日期**: 2026-03-07
 **目标读者**: 使用 DeepAgents 作为依赖的外部项目团队
 
 ---
@@ -38,6 +38,22 @@ result = agent.invoke({
 })
 ```
 
+### 1.1 推荐：统一控制主 Agent + 所有 SubAgents
+
+当你只需要在一个地方启用动态技能加载，推荐直接通过 `create_deep_agent` 的参数统一控制，这样主 Agent 与所有 SubAgents 会同时生效：
+
+```python
+from deepagents import create_deep_agent
+
+agent = create_deep_agent(
+    model="openai:gpt-4o-mini",
+    skills=["/skills/user", "/skills/project"],
+    skills_expose_dynamic_tools=True,  # 主 Agent + 所有 SubAgents 同时启用动态工具
+)
+```
+
+如果某个 SubAgent 需要独立控制，可在该 SubAgent 的 `middleware` 中自行注入 `SkillsMiddleware`，框架将自动跳过默认注入，避免重复。
+
 ### 2. 关键参数说明
 
 | 参数 | 类型 | 默认值 | 说明 |
@@ -67,7 +83,7 @@ result = agent.invoke({
 
 **功能**: 将指定技能标记为"已加载"状态，在系统提示中显示 `[Loaded]` 标记。
 
-**返回值**: 
+**返回值**:
 - 成功: `"Loaded skill 'web_search'"`
 - 失败: `"Skill 'web_search' not found"` 或 `"Max loaded skills (4) reached"`
 
@@ -181,7 +197,7 @@ def test_dynamic_loading():
         )
     except TypeError:
         pytest.skip("当前 DeepAgents 版本不支持动态加载功能")
-    
+
     # 测试逻辑...
 ```
 
@@ -193,11 +209,11 @@ def safe_load_skill(agent, skill_name):
     try:
         result = agent.invoke({
             "messages": [{
-                "role": "user", 
+                "role": "user",
                 "content": f"load_skill('{skill_name}')"
             }]
         })
-        
+
         # 检查结果
         if f"Loaded skill '{skill_name}'" in str(result):
             return True, "加载成功"
@@ -207,7 +223,7 @@ def safe_load_skill(agent, skill_name):
             return False, "已达到最大加载数量限制"
         else:
             return False, f"未知错误: {result}"
-            
+
     except Exception as e:
         return False, f"异常: {str(e)}"
 ```
@@ -231,7 +247,7 @@ def safe_load_skill(agent, skill_name):
    # ❌ 旧代码
    middleware._create_load_skill_tool()
    middleware._create_unload_skill_tool()
-   
+
    # ✅ 新代码
    # 不需要直接调用，通过 expose_dynamic_tools=True 自动启用
    ```
@@ -240,7 +256,7 @@ def safe_load_skill(agent, skill_name):
    ```python
    # ❌ 旧代码
    middleware = SkillsMiddleware(backend=backend, sources=["/skills"])
-   
+
    # ✅ 新代码
    middleware = SkillsMiddleware(
        backend=backend,
@@ -256,7 +272,7 @@ def safe_load_skill(agent, skill_name):
    def test_old_api():
        tool = middleware._create_load_skill_tool()
        result = tool(skill_name="test")
-   
+
    # ✅ 新测试
    def test_new_api():
        result = agent.invoke({
@@ -281,4 +297,4 @@ def safe_load_skill(agent, skill_name):
 
 ---
 
-*本指南最后更新：2026-03-06*
+*本指南最后更新：2026-03-07*

@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Deep Agents come with planning, filesystem, and subagents."""
 
 from collections.abc import Callable, Sequence
@@ -112,6 +113,7 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
     middleware: Sequence[AgentMiddleware] = (),
     subagents: list[SubAgent | CompiledSubAgent] | None = None,
     skills: list[str] | None = None,
+    skills_expose_dynamic_tools: bool = False,
     memory: list[str] | None = None,
     response_format: ResponseFormat | None = None,
     context_schema: type[Any] | None = None,
@@ -181,6 +183,8 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
             `invoke(files={...})`. With `FilesystemBackend`, skills are loaded from disk relative
             to the backend's `root_dir`. Later sources override earlier ones for skills with the
             same name (last one wins).
+        skills_expose_dynamic_tools: Whether to expose dynamic tools (`load_skill`, `unload_skill`)
+            for skill lifecycle management in any injected `SkillsMiddleware`. Defaults to `False`.
         memory: Optional list of memory file paths (`AGENTS.md` files) to load
             (e.g., `["/memory/AGENTS.md"]`).
 
@@ -220,7 +224,17 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
         PatchToolCallsMiddleware(),
     ]
     if skills is not None:
-        gp_middleware.append(SkillsMiddleware(backend=backend, sources=skills))
+        # Optional enhancement: if user already provides a SkillsMiddleware in top-level
+        # middleware list, skip default injection to avoid duplicates.
+        skip_main_skills = any(isinstance(m, SkillsMiddleware) for m in middleware)
+        if not skip_main_skills:
+            gp_middleware.append(
+                SkillsMiddleware(
+                    backend=backend,
+                    sources=skills,
+                    expose_dynamic_tools=skills_expose_dynamic_tools,
+                )
+            )
     if interrupt_on is not None:
         gp_middleware.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
 
@@ -251,9 +265,19 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
                 PatchToolCallsMiddleware(),
             ]
             subagent_skills = spec.get("skills")
+            user_spec_middleware = list(spec.get("middleware", []))
             if subagent_skills:
-                subagent_middleware.append(SkillsMiddleware(backend=backend, sources=subagent_skills))
-            subagent_middleware.extend(spec.get("middleware", []))
+                # Skip default injection if user already provided a SkillsMiddleware
+                skip_subagent_skills = any(isinstance(m, SkillsMiddleware) for m in user_spec_middleware)
+                if not skip_subagent_skills:
+                    subagent_middleware.append(
+                        SkillsMiddleware(
+                            backend=backend,
+                            sources=subagent_skills,
+                            expose_dynamic_tools=skills_expose_dynamic_tools,
+                        )
+                    )
+            subagent_middleware.extend(user_spec_middleware)
 
             processed_spec: SubAgent = {  # ty: ignore[missing-typed-dict-key]
                 **spec,
@@ -273,7 +297,16 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
     if memory is not None:
         deepagent_middleware.append(MemoryMiddleware(backend=backend, sources=memory))
     if skills is not None:
-        deepagent_middleware.append(SkillsMiddleware(backend=backend, sources=skills))
+        # Skip injection if user already provided a SkillsMiddleware in top-level middleware
+        skip_main_skills = any(isinstance(m, SkillsMiddleware) for m in middleware)
+        if not skip_main_skills:
+            deepagent_middleware.append(
+                SkillsMiddleware(
+                    backend=backend,
+                    sources=skills,
+                    expose_dynamic_tools=skills_expose_dynamic_tools,
+                )
+            )
     deepagent_middleware.extend(
         [
             FilesystemMiddleware(backend=backend),

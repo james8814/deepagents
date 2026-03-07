@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Skills middleware for loading and exposing agent skills to the system prompt.
 
 This module implements Anthropic's agent skills pattern with progressive disclosure,
@@ -99,9 +100,12 @@ import yaml
 from langchain.agents.middleware.types import PrivateStateAttr
 
 if TYPE_CHECKING:
-    from deepagents.backends.protocol import BACKEND_TYPES, BackendProtocol
+    from collections.abc import Awaitable, Callable
 
-from collections.abc import Awaitable, Callable
+    from langchain_core.runnables import RunnableConfig
+    from langgraph.runtime import Runtime
+
+    from deepagents.backends.protocol import BACKEND_TYPES, BackendProtocol
 from typing import Literal, NotRequired
 
 from langchain.agents.middleware.types import (
@@ -111,10 +115,8 @@ from langchain.agents.middleware.types import (
     ModelResponse,
 )
 from langchain_core.messages import ToolMessage
-from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import StructuredTool
 from langgraph.prebuilt import ToolRuntime
-from langgraph.runtime import Runtime
 from langgraph.types import Command
 from typing_extensions import TypedDict
 
@@ -139,14 +141,14 @@ RESOURCE_TYPE_MAP: dict[str, Literal["script", "reference", "asset"]] = {
 
 
 class ResourceMetadata(TypedDict):
-    """技能资源文件的元数据。用于延迟发现策略，缓存技能目录下的资源文件信息。"""
+    """Metadata for skill resource files used by lazy discovery to cache information."""
 
     path: str
-    """资源文件在 backend 中的完整路径。"""
+    """Full backend path to the resource file."""
     type: Literal["script", "reference", "asset", "other"]
-    """资源类型，基于所在目录名推断。"""
+    """Resource type inferred from the containing directory name."""
     skill_name: str
-    """所属技能的名称。"""
+    """Owning skill name."""
 
 
 # =============================================================================
@@ -159,12 +161,12 @@ def _discover_resources(
     skill_dir: str,
     skill_name: str,
 ) -> list[ResourceMetadata]:
-    """发现技能目录下的资源文件（同步版本）。扫描标准资源目录（仅第一层）。"""
+    """Discover resource files under a skill directory (sync). Scans standard resource dirs at depth 1."""
     resources: list[ResourceMetadata] = []
 
     try:
         items = backend.ls_info(skill_dir)
-    except Exception:
+    except Exception:  # noqa: BLE001
         logger.warning("Failed to list resources for skill '%s' at %s", skill_name, skill_dir)
         return resources
 
@@ -178,12 +180,10 @@ def _discover_resources(
                 continue
             try:
                 sub_items = backend.ls_info(item_path)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 logger.warning("Failed to list resources in %s", item_path)
                 continue
-            for sub_item in sub_items:
-                if not sub_item.get("is_dir"):
-                    resources.append({"path": sub_item["path"], "type": resource_type, "skill_name": skill_name})
+            resources.extend({"path": si["path"], "type": resource_type, "skill_name": skill_name} for si in sub_items if not si.get("is_dir"))
         elif item_name != "SKILL.md":
             resources.append({"path": item_path, "type": "other", "skill_name": skill_name})
 
@@ -195,12 +195,12 @@ async def _adiscover_resources(
     skill_dir: str,
     skill_name: str,
 ) -> list[ResourceMetadata]:
-    """发现技能目录下的资源文件（异步版本）。"""
+    """Discover resource files under a skill directory (async)."""
     resources: list[ResourceMetadata] = []
 
     try:
         items = await backend.als_info(skill_dir)
-    except Exception:
+    except Exception:  # noqa: BLE001
         logger.warning("Failed to list resources for skill '%s' at %s", skill_name, skill_dir)
         return resources
 
@@ -214,12 +214,10 @@ async def _adiscover_resources(
                 continue
             try:
                 sub_items = await backend.als_info(item_path)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 logger.warning("Failed to list resources in %s", item_path)
                 continue
-            for sub_item in sub_items:
-                if not sub_item.get("is_dir"):
-                    resources.append({"path": sub_item["path"], "type": resource_type, "skill_name": skill_name})
+            resources.extend({"path": si["path"], "type": resource_type, "skill_name": skill_name} for si in sub_items if not si.get("is_dir"))
         elif item_name != "SKILL.md":
             resources.append({"path": item_path, "type": "other", "skill_name": skill_name})
 
@@ -227,7 +225,7 @@ async def _adiscover_resources(
 
 
 def _format_resource_summary(resources: list[ResourceMetadata]) -> str:
-    """格式化资源摘要，按类型分组。"""
+    """Format a resource summary grouped by type."""
     by_type: dict[str, int] = {}
     for r in resources:
         by_type[r["type"]] = by_type.get(r["type"], 0) + 1
@@ -306,11 +304,11 @@ class SkillsState(AgentState):
 
     # V2: Track which skills have been loaded (activated) by the agent
     skills_loaded: NotRequired[Annotated[list[str], PrivateStateAttr]]
-    """已加载（激活）的技能名称列表。"""
+    """Names of skills that are loaded (activated)."""
 
     # V2: Cache discovered skill resources for loaded skills
     skill_resources: NotRequired[Annotated[dict[str, list[ResourceMetadata]], PrivateStateAttr]]
-    """已发现的技能资源映射，键为技能名称。"""
+    """Mapping of discovered resources keyed by skill name."""
 
 
 class SkillsStateUpdate(TypedDict):
@@ -366,7 +364,7 @@ def _validate_skill_name(name: str, directory_name: str) -> tuple[bool, str]:
     return True, ""
 
 
-def _parse_skill_metadata(
+def _parse_skill_metadata(  # noqa: C901
     content: str,
     skill_path: str,
     directory_name: str,
@@ -450,10 +448,7 @@ def _parse_skill_metadata(
 
     # Handle license: ensure it's a string before calling strip()
     license_raw = frontmatter_data.get("license", "")
-    if isinstance(license_raw, bool):
-        license_str = None
-    else:
-        license_str = str(license_raw).strip() or None
+    license_str = None if isinstance(license_raw, bool) else str(license_raw).strip() or None
 
     # Handle compatibility: truncate to MAX_SKILL_COMPATIBILITY_LENGTH per spec
     compatibility_str = str(frontmatter_data.get("compatibility", "")).strip() or None
@@ -752,13 +747,14 @@ class SkillsMiddleware(AgentMiddleware):
             backend_factory = cast("Callable[[ToolRuntime], BackendProtocol]", self._backend)
             backend = backend_factory(cast("ToolRuntime", tool_runtime))
             if backend is None:
-                raise AssertionError("SkillsMiddleware requires a valid backend instance")
+                msg = "SkillsMiddleware requires a valid backend instance"
+                raise AssertionError(msg)
             return backend
 
         return self._backend
 
     def _get_backend_from_runtime(self, runtime: ToolRuntime[None, SkillsState]) -> BackendProtocol:
-        """从 ToolRuntime 中解析 backend 实例，用于工具函数中。"""
+        """Resolve backend instance from ToolRuntime for use in tool functions."""
         if callable(self._backend):
             backend_factory = cast("Callable[[ToolRuntime], BackendProtocol]", self._backend)
             return backend_factory(cast("ToolRuntime", runtime))
@@ -954,7 +950,7 @@ class SkillsMiddleware(AgentMiddleware):
     # ==========================================================================
 
     def _create_load_skill_tool(self) -> StructuredTool:
-        """创建 load_skill 工具。"""
+        """Create load_skill tool."""
 
         def sync_load_skill(
             skill_name: str,
@@ -974,21 +970,23 @@ class SkillsMiddleware(AgentMiddleware):
 
         return StructuredTool.from_function(
             name="load_skill",
-            description="Load a skill's full instructions and discover its resources. Use this instead of read_file when you need to activate a skill.",
+            description=(
+                "Load a skill's full instructions and discover its resources. Use this instead of read_file when you need to activate a skill."
+            ),
             func=sync_load_skill,
             coroutine=async_load_skill,
         )
 
-    def _execute_load_skill(
+    def _execute_load_skill(  # noqa: C901, PLR0911
         self,
         backend: BackendProtocol,
         skill_name: str,
         runtime: ToolRuntime[None, SkillsState],
     ) -> Command | str:
-        """load_skill 核心逻辑（同步版本）。"""
+        """Core logic for load_skill (sync version)."""
         state = runtime.state
         skills_metadata = state.get("skills_metadata", [])
-        # 浅拷贝 dict 即可——后续代码仅添加/替换 key，不会原地修改已有 value 的内容
+        # Shallow copy dict - subsequent code only adds/replaces keys, doesn't modify existing values in place
         skill_resources = dict(state.get("skill_resources", {}))
         loaded_skills = list(state.get("skills_loaded", []))
 
@@ -1028,8 +1026,6 @@ class SkillsMiddleware(AgentMiddleware):
             return f"Error: Failed to decode skill file: {e}"
 
         if skill_name not in skill_resources:
-            from pathlib import PurePosixPath
-
             skill_dir = str(PurePosixPath(target_skill["path"]).parent)
             skill_resources[skill_name] = _discover_resources(backend, skill_dir, skill_name)
 
@@ -1037,13 +1033,12 @@ class SkillsMiddleware(AgentMiddleware):
         resources = skill_resources.get(skill_name, [])
         if resources:
             result_parts.append("\n\n---\n**Skill Resources:**\n")
-            for resource in resources:
-                result_parts.append(f"- [{resource['type']}] `{resource['path']}`")
+            result_parts.extend(f"- [{resource['type']}] `{resource['path']}`" for resource in resources)
 
         result_content = "\n".join(result_parts)
         loaded_skills.append(skill_name)
 
-        # messages 放在 update 字典内部，这是 LangGraph Command 的标准模式
+        # messages placed inside update dict, which is the standard pattern for LangGraph Command
         return Command(
             update={
                 "skills_loaded": loaded_skills,
@@ -1052,13 +1047,13 @@ class SkillsMiddleware(AgentMiddleware):
             },
         )
 
-    async def _aexecute_load_skill(
+    async def _aexecute_load_skill(  # noqa: C901, PLR0911
         self,
         backend: BackendProtocol,
         skill_name: str,
         runtime: ToolRuntime[None, SkillsState],
     ) -> Command | str:
-        """load_skill 核心逻辑（异步版本）。"""
+        """Core logic for load_skill (async version)."""
         state = runtime.state
         skills_metadata = state.get("skills_metadata", [])
         skill_resources = dict(state.get("skill_resources", {}))
@@ -1100,8 +1095,6 @@ class SkillsMiddleware(AgentMiddleware):
             return f"Error: Failed to decode skill file: {e}"
 
         if skill_name not in skill_resources:
-            from pathlib import PurePosixPath
-
             skill_dir = str(PurePosixPath(target_skill["path"]).parent)
             skill_resources[skill_name] = await _adiscover_resources(backend, skill_dir, skill_name)
 
@@ -1109,8 +1102,7 @@ class SkillsMiddleware(AgentMiddleware):
         resources = skill_resources.get(skill_name, [])
         if resources:
             result_parts.append("\n\n---\n**Skill Resources:**\n")
-            for resource in resources:
-                result_parts.append(f"- [{resource['type']}] `{resource['path']}`")
+            result_parts.extend(f"- [{resource['type']}] `{resource['path']}`" for resource in resources)
 
         result_content = "\n".join(result_parts)
         loaded_skills.append(skill_name)
@@ -1124,7 +1116,7 @@ class SkillsMiddleware(AgentMiddleware):
         )
 
     def _create_unload_skill_tool(self) -> StructuredTool:
-        """创建 unload_skill 工具。"""
+        """Create unload_skill tool."""
 
         def sync_unload_skill(
             skill_name: str,
@@ -1152,7 +1144,7 @@ class SkillsMiddleware(AgentMiddleware):
         skill_name: str,
         runtime: ToolRuntime[None, SkillsState],
     ) -> Command | str:
-        """unload_skill 核心逻辑（同步/异步共用，不涉及 I/O）。"""
+        """Core logic for unload_skill (shared sync/async, no I/O)."""
         state = runtime.state
         loaded_skills = list(state.get("skills_loaded", []))
         skill_resources = dict(state.get("skill_resources", {}))
