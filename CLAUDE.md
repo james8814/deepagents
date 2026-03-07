@@ -164,6 +164,14 @@ license: MIT
 - **`[Loaded]` marker**: System prompt shows which skills are loaded
 - **Context budget**: `max_loaded_skills=10` limits simultaneously loaded skills
 - **Resource discovery**: Auto-scans `scripts/`, `references/`, `assets/` directories
+- **`expose_dynamic_tools`**: `bool = False` — controls whether `load_skill`/`unload_skill` tools are exposed
+- **`allowed_skills`**: `list[str] | None = None` — optional allowlist to filter visible skills by name
+
+**Per-SubAgent Skill Filtering** (2026-03-07):
+- `SubAgent` TypedDict has `skills_allowlist: NotRequired[list[str]]` field
+- `create_deep_agent` wires `skills_allowlist` into `SkillsMiddleware(allowed_skills=...)`
+- Enables per-SubAgent skill visibility: e.g., research_agent sees 4 skills, analysis_agent sees 6
+- Default `None` preserves directory-level scan behavior (backward compatible)
 
 **Progressive Disclosure**: Only metadata (name + description) injected at startup. Agent reads full `SKILL.md` via `load_skill()` when needed.
 
@@ -293,11 +301,14 @@ Scopes: `deepagents`, `sdk`, `deepagents-cli`, `cli`, `harbor`, `acp`, `examples
 
 **Thread ID Extraction**: Summarization extracts `thread_id` from LangGraph config, falls back to generated session ID.
 
-**SkillsMiddleware V2** (2026-02-18):
+**SkillsMiddleware V2** (2026-02-18, enhanced 2026-03-07):
 - Full implementation: `docs/skillsmiddleware_docs/SkillsMiddleware_V2_核查报告.md`
 - Design document: `docs/skillsmiddleware_docs/DeepAgents_SkillsMiddleware_V2_升级设计方案_final.md`
 - Key changes: `libs/deepagents/deepagents/middleware/skills.py` (+442 lines)
 - CLI compatibility: Fully backward compatible, no changes required
+- External team guide: `docs/api/EXTERNAL_TEAM_API_GUIDE.md`
+- Review report: `docs/integrations/skills/v2_review_report.md`
+- Dynamic loading guide: `docs/integrations/skills/dynamic_loading_guide.md`
 
 **Upload Adapter V5.0** (2026-02-27):
 - Location: `libs/deepagents/deepagents/upload_adapter.py`
