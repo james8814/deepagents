@@ -26,7 +26,7 @@ def _assert_snapshot(snapshot_path: Path, actual: str, *, update_snapshots: bool
         raise AssertionError(msg)
 
     expected = snapshot_path.read_text()
-    assert actual.rstrip("\n") == expected.rstrip("\n")
+    assert actual == expected
 
 
 def test_system_prompt_snapshot_with_execute(snapshots_dir: Path, *, update_snapshots: bool) -> None:

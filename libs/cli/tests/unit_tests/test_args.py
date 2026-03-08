@@ -1,6 +1,7 @@
 """Tests for CLI argument parsing."""
 
 import io
+import re
 import sys
 from unittest.mock import patch
 
@@ -8,7 +9,8 @@ import pytest
 from rich.console import Console
 
 from deepagents_cli.agent import DEFAULT_AGENT_NAME
-from deepagents_cli.main import parse_args
+from deepagents_cli.main import _DEFAULT_AGENT_NAME, parse_args
+from deepagents_cli.ui import show_help
 
 
 class TestInitialPromptArg:
@@ -121,6 +123,7 @@ class TestTopLevelHelp:
         # Should contain global help content
         assert "deepagents" in output.lower()
         assert "--help" in output
+        assert "--ask-user" in output
 
     def test_help_subcommand_parses(self) -> None:
         """Running `deepagents help` should parse as command='help'.
@@ -252,11 +255,92 @@ class TestQuietArg:
         assert args.quiet is True
         assert args.non_interactive_message == "run tests"
 
-    def test_quiet_without_non_interactive_exits(self) -> None:
-        """Verify --quiet without -n triggers parser.error (exit code 2)."""
+    def test_quiet_without_non_interactive_parses(self) -> None:
+        """Verify --quiet without -n parses successfully.
+
+        The usage-error guard now lives in `cli_main` (after stdin pipe
+        processing), so `parse_args` itself should not reject this combo.
+        """
+        with patch.object(sys, "argv", ["deepagents", "-q"]):
+            args = parse_args()
+        assert args.quiet is True
+        assert args.non_interactive_message is None
+
+
+class TestNoMcpArg:
+    """Tests for --no-mcp argument parsing."""
+
+    def test_no_mcp_flag_parsed(self) -> None:
+        """Verify --no-mcp sets no_mcp=True."""
+        with patch.object(sys, "argv", ["deepagents", "--no-mcp"]):
+            args = parse_args()
+        assert args.no_mcp is True
+
+    def test_no_mcp_default_false(self) -> None:
+        """Verify no_mcp defaults to False."""
+        with patch.object(sys, "argv", ["deepagents"]):
+            args = parse_args()
+        assert args.no_mcp is False
+
+    def test_no_mcp_and_mcp_config_mutual_exclusion(self) -> None:
+        """--no-mcp + --mcp-config should exit with code 2."""
+        from deepagents_cli.main import cli_main
+
+        with (  # noqa: SIM117  # separate to satisfy PT012
+            patch.object(
+                sys,
+                "argv",
+                ["deepagents", "--no-mcp", "--mcp-config", "/some/path"],
+            ),
+            patch("deepagents_cli.main.check_cli_dependencies"),
+            patch("deepagents_cli.main.apply_stdin_pipe"),
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                cli_main()
+        assert exc_info.value.code == 2
+
+
+def test_default_agent_name_matches_canonical() -> None:
+    """Ensure the duplicated constant in main.py stays in sync with agent.py."""
+    assert _DEFAULT_AGENT_NAME == DEFAULT_AGENT_NAME
+
+
+class TestHelpScreenDrift:
+    """Ensure show_help() stays in sync with argparse flag definitions.
+
+    The help screen in `ui.show_help()` is hand-maintained separately from
+    the argparse definitions in `main.parse_args()`.  This test catches
+    drift — e.g. a new flag added to argparse but forgotten in the help screen.
+    """
+
+    def test_all_parser_flags_appear_in_help(self) -> None:
+        """Every top-level --flag in argparse must appear in show_help()."""
+        # 1. Trigger argparse usage line by passing an unrecognized flag.
+        #    argparse prints the full usage (all flags) to stderr, then exits.
+        stderr_buf = io.StringIO()
         with (
-            patch.object(sys, "argv", ["deepagents", "-q"]),
-            pytest.raises(SystemExit) as exc_info,
+            patch.object(sys, "argv", ["deepagents", "--_x_"]),
+            patch("sys.stderr", stderr_buf),
+            pytest.raises(SystemExit),
         ):
             parse_args()
-        assert exc_info.value.code == 2
+        usage_text = stderr_buf.getvalue()
+
+        # 2. Render show_help() to a string.
+        help_buf = io.StringIO()
+        test_console = Console(file=help_buf, highlight=False, width=200)
+        with patch("deepagents_cli.ui.console", test_console):
+            show_help()
+        help_text = help_buf.getvalue()
+
+        # 3. Extract --long-form flags from both and compare.
+        parser_flags = set(re.findall(r"--[\w][\w-]*", usage_text))
+        help_flags = set(re.findall(r"--[\w][\w-]*", help_text))
+
+        parser_flags.discard("--_x_")  # remove the fake trigger flag
+
+        missing = parser_flags - help_flags
+        assert not missing, (
+            f"Flags in argparse but missing from show_help(): {missing}\n"
+            "Add them to the Options section in ui.show_help()."
+        )

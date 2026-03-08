@@ -4,8 +4,10 @@ Prints a single line: matrix={"model":["provider:model-name", ...]}
 suitable for appending to $GITHUB_OUTPUT.
 
 Reads the EVAL_MODELS env var to determine which models to include:
-  - "all" (default): every model in MODELS
+  - "all" (default): every model across all sets (deduplicated)
+  - "set0": first-party API providers (Anthropic, OpenAI, Google)
   - "set1": a curated subset of flagship models
+  - "set2": slower third-party hosted models
   - any other value: treated as a single "provider:model" spec
 """
 
@@ -14,7 +16,7 @@ from __future__ import annotations
 import json
 import os
 
-MODELS: list[str] = [
+SET0: list[str] = [
     # Anthropic
     "anthropic:claude-haiku-4-5-20251001",
     "anthropic:claude-sonnet-4-20250514",
@@ -29,21 +31,55 @@ MODELS: list[str] = [
     "openai:gpt-4.1",
     "openai:o3",
     "openai:o4-mini",
-    "openai:gpt-5",
     "openai:gpt-5.1-codex",
     "openai:gpt-5.2-codex",
+    "openai:gpt-5.4",
     # Google
     "google_genai:gemini-2.5-flash",
     "google_genai:gemini-2.5-pro",
     "google_genai:gemini-3-flash-preview",
     "google_genai:gemini-3.1-pro-preview",
-    # xAI
-    "xai:grok-4",
-    "xai:grok-3-mini-fast",
+    # Baseten
+    "baseten:zai-org/GLM-5",
+    "baseten:MiniMaxAI/MiniMax-M2.5",
+    "baseten:moonshotai/Kimi-K2.5",
+    "baseten:deepseek-ai/DeepSeek-V3.2",
+    "baseten:Qwen/Qwen3-Coder-480B-A35B-Instruct",
+    # Fireworks
+    "fireworks:fireworks/qwen3-vl-235b-a22b-thinking",
+    "fireworks:fireworks/deepseek-v3-0324",
+    "fireworks:fireworks/minimax-m2p1",
+    "fireworks:fireworks/kimi-k2p5",
+    "fireworks:fireworks/glm-5",
+    "fireworks:fireworks/minimax-m2p5",
+]
+
+SET1: list[str] = [
+    "anthropic:claude-haiku-4-5-20251001",
+    "anthropic:claude-sonnet-4-6",
+    "anthropic:claude-opus-4-6",
+    "openai:gpt-4.1",
+    "openai:gpt-5.2-codex",
+    "openai:gpt-5.4",
+    "google_genai:gemini-3.1-pro-preview",
+    "google_genai:gemini-2.5-pro",
+    "ollama:glm-5",
+    "ollama:minimax-m2.5",
+    "ollama:qwen3.5:397b-cloud",
+    "baseten:zai-org/GLM-5",
+    "baseten:MiniMaxAI/MiniMax-M2.5",
+    "fireworks:fireworks/qwen3-vl-235b-a22b-thinking",
+]
+
+# These are a bit slower
+SET2: list[str] = [
     # Groq
     "groq:openai/gpt-oss-120b",
     "groq:qwen/qwen3-32b",
     "groq:moonshotai/kimi-k2-instruct",
+    # xAI
+    "xai:grok-4",
+    "xai:grok-3-mini-fast",
     # Ollama Cloud
     "ollama:glm-5",
     "ollama:minimax-m2.5",
@@ -57,31 +93,32 @@ MODELS: list[str] = [
     "ollama:deepseek-v3.2:cloud",
 ]
 
-SET1: list[str] = [
-    "anthropic:claude-sonnet-4-6",
-    "anthropic:claude-opus-4-6",
-    "openai:gpt-4.1",
-    "openai:o3",
-    "openai:gpt-5",
-    "google_genai:gemini-2.5-pro",
-    "xai:grok-4",
-]
-
 
 def _resolve_models(selection: str) -> list[str]:
     """Return the list of models for the given selection string.
 
-    Accepts "all", "set1", a single model spec, or comma-separated model specs.
+    Accepts "all", "set1", "set2", a single model spec, or comma-separated
+    model specs.
     """
     selection = selection.strip()
     if selection == "all":
-        return MODELS
+        seen: set[str] = set()
+        result: list[str] = []
+        for model in SET0 + SET1 + SET2:
+            if model not in seen:
+                seen.add(model)
+                result.append(model)
+        return result
+    if selection == "set0":
+        return SET0
     if selection == "set1":
         return SET1
+    if selection == "set2":
+        return SET2
     specs = [s.strip() for s in selection.split(",") if s.strip()]
-    unknown = [s for s in specs if s not in MODELS]
-    if unknown:
-        msg = f"Unknown model(s): {', '.join(repr(s) for s in unknown)}"
+    invalid = [s for s in specs if ":" not in s]
+    if invalid:
+        msg = f"Invalid model spec(s) (expected 'provider:model'): {', '.join(repr(s) for s in invalid)}"
         raise ValueError(msg)
     return specs
 
