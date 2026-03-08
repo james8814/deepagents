@@ -1550,6 +1550,108 @@ class DeepAgentsApp(App):
                 logger.warning("Unexpected error looking up SDK version", exc_info=True)
                 sdk_line = "deepagents (SDK) version: unknown"
             await self._mount_message(AppMessage(f"{cli_line}\n{sdk_line}"))
+        elif cmd.startswith("/upload"):
+            # Usage: /upload <path>
+            args = command.strip().split(" ", 1)
+            if len(args) < 2:
+                await self._mount_message(UserMessage(command))
+                await self._mount_message(ErrorMessage("Usage: /upload <path>"))
+                return
+
+            file_path_str = args[1].strip()
+            # Handle quoted paths if user drags & drops
+            if (file_path_str.startswith('"') and file_path_str.endswith('"')) or \
+               (file_path_str.startswith("'") and file_path_str.endswith("'")):
+                file_path_str = file_path_str[1:-1]
+
+            await self._mount_message(UserMessage(f"/upload {file_path_str}"))
+
+            try:
+                from pathlib import Path
+
+                from deepagents_cli.utils.security import SecurityError, ValidationError, validate_file_type
+
+                source_path = Path(file_path_str)
+                # 1. Security & Validation
+                mime_type = await asyncio.to_thread(validate_file_type, source_path)
+
+                # 2. Upload to backend
+                if not self._backend:
+                    await self._mount_message(ErrorMessage("Backend not initialized"))
+                    return
+
+                # Read file content
+                content = await asyncio.to_thread(source_path.read_bytes)
+
+                # Target path in virtual filesystem
+                target_filename = source_path.name
+                target_path = f"/uploads/{target_filename}"
+
+                # Upload
+                # We use upload_files which takes list of (path, content)
+                # BackendProtocol.upload_files is synchronous, wrap in thread if needed
+                # But we can check if it has aupload_files
+                if hasattr(self._backend, "aupload_files"):
+                    responses = await self._backend.aupload_files([(target_path, content)])
+                else:
+                    responses = await asyncio.to_thread(
+                        self._backend.upload_files, [(target_path, content)]
+                    )
+
+                response = responses[0]
+                if response.error:
+                    await self._mount_message(ErrorMessage(f"Upload failed: {response.error}"))
+                else:
+                    # Success - Provide feedback based on file type
+                    file_size = len(content)
+                    status_text = f"✓ {target_filename} uploaded ({file_size / 1024:.1f}KB)"
+
+                    # Provide type-specific guidance
+                    base_path = f"/uploads/{target_filename}"
+                    if mime_type.startswith(("image/", "audio/", "video/")):
+                        details = (
+                            f"   File available at {base_path}. "
+                            "Note: Binary files cannot be read directly. "
+                            "Use `execute` with external tools to process."
+                        )
+                    elif mime_type == "application/pdf":
+                        details = (
+                            f"   File available at {base_path}. "
+                            "Note: PDFs cannot be read directly. "
+                            "Use `execute` with `pdftotext` or similar tools."
+                        )
+                    elif mime_type in ("application/zip", "application/x-tar", "application/gzip"):
+                        details = (
+                            f"   File available at {base_path}. "
+                            "Use `execute` with `unzip`, `tar`, etc. "
+                            "to extract and access contents."
+                        )
+                    elif mime_type in (
+                        "application/msword",
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        "application/vnd.ms-excel",
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        "application/vnd.ms-powerpoint",
+                        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                    ):
+                        details = (
+                            f"   File available at {base_path}. "
+                            "Note: Office documents cannot be read directly. "
+                            "Use `execute` with `pandoc` to extract text."
+                        )
+                    else:
+                        details = (
+                            f"   File available at {base_path}. "
+                            "Use `ls /uploads` and `read_file` to access."
+                        )
+
+                    await self._mount_message(AppMessage(status_text))
+                    await self._mount_message(AppMessage(details))
+
+            except (ValidationError, SecurityError) as e:
+                await self._mount_message(ErrorMessage(str(e)))
+            except Exception as e:
+                await self._mount_message(ErrorMessage(f"Error uploading file: {e}"))
         elif cmd == "/clear":
             self._pending_messages.clear()
             self._queued_widgets.clear()
