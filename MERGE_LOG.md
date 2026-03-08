@@ -15,4 +15,26 @@
 
 ## 合并记录
 
-b5c8a998 - SKIPPED (local has improvements)
+### 合并批次
+
+| 批次 | 提交数 | 说明 |
+|------|--------|------|
+| 1 | 8 | 初始 cherry-pick (CLI fixes) |
+| 2 | 1 | 跳过 b5c8a998 (本地已包含改进) |
+| 3 | 1 | non-interactive mode |
+| 4 | 6 | CLI commits |
+| 5 | 2 | CI/partner packages |
+| 6 | ~300 | 批量合并剩余提交 |
+
+### 关键决策
+- b5c8a998 - SKIPPED (本地已包含上游验证改进)
+- skills.py - 始终保持本地 V2 版本
+- 其他 SDK 文件 - 采用上游版本
+- CLI/infra 文件 - 采用上游版本
+
+### 最终状态
+- ✅ 337 个上游提交全部合并
+- ✅ V2 特性完整保留
+- ✅ 本地 master 与 upstream/main 同步
+
+**完成时间**: 2026-03-08

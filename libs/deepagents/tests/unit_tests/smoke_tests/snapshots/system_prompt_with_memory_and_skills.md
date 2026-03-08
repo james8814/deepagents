@@ -134,9 +134,9 @@ You have access to a skills library that provides specialized capabilities and d
 **Available Skills:**
 
 - **web-research**: Structured approach to conducting thorough web research on any topic
-  -> Read `/skills/user/web-research/SKILL.md` for full instructions
+  -> Use `load_skill("web-research")` to read full instructions
 - **code-review**: Systematic code review process following best practices and style guides
-  -> Read `/skills/project/code-review/SKILL.md` for full instructions
+  -> Use `load_skill("code-review")` to read full instructions
 
 **How to Use Skills (Progressive Disclosure):**
 
