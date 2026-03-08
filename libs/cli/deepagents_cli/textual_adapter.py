@@ -5,17 +5,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
-import time
 import uuid
-from dataclasses import dataclass, field
+from contextlib import suppress
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
-
-    from rich.console import Console
 
 from langchain.agents.middleware.human_in_the_loop import (
     ApproveDecision,
@@ -28,187 +24,16 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.types import Command, Interrupt
 from pydantic import TypeAdapter, ValidationError
 
-from deepagents_cli.config import settings
 from deepagents_cli.file_ops import FileOpTracker
 from deepagents_cli.image_utils import create_multimodal_content
 from deepagents_cli.input import ImageTracker, parse_file_mentions
-from deepagents_cli.tool_display import format_tool_message_content
+from deepagents_cli.ui import format_tool_message_content
 from deepagents_cli.widgets.messages import (
     AppMessage,
     AssistantMessage,
     DiffMessage,
-    SummarizationMessage,
     ToolCallMessage,
 )
-
-logger = logging.getLogger(__name__)
-
-
-@dataclass
-class ModelStats:
-    """Token stats for a single model within a session.
-
-    Attributes:
-        request_count: Number of LLM API requests made to this model.
-        input_tokens: Cumulative input tokens sent to this model.
-        output_tokens: Cumulative output tokens received from this model.
-    """
-
-    request_count: int = 0
-    input_tokens: int = 0
-    output_tokens: int = 0
-
-
-@dataclass
-class SessionStats:
-    """Stats accumulated over a single agent turn (or full session).
-
-    Attributes:
-        request_count: Total LLM API requests made (each chunk with
-            usage_metadata counts as one completed request).
-        input_tokens: Cumulative input tokens across all LLM requests.
-        output_tokens: Cumulative output tokens across all LLM requests.
-        wall_time_seconds: Wall-clock duration from stream start to end.
-        per_model: Per-model breakdown keyed by model name.
-            Populated only when `record_request` receives a non-empty
-            `model_name`. Empty dict means no named-model requests were
-            recorded; `print_usage_table` omits the model table in that case and
-            shows only the wall-time line (if applicable).
-    """
-
-    request_count: int = 0
-    input_tokens: int = 0
-    output_tokens: int = 0
-    wall_time_seconds: float = 0.0
-    per_model: dict[str, ModelStats] = field(default_factory=dict)
-
-    def record_request(
-        self,
-        model_name: str,
-        input_toks: int,
-        output_toks: int,
-    ) -> None:
-        """Accumulate token counts for one completed LLM request.
-
-        Updates both the session totals and the per-model breakdown.
-
-        Args:
-            model_name: The model that served this request (used as the
-                per-model key). Pass an empty string to skip the per-model
-                breakdown for this request.
-            input_toks: Input tokens for this request.
-            output_toks: Output tokens for this request.
-        """
-        self.request_count += 1
-        self.input_tokens += input_toks
-        self.output_tokens += output_toks
-        if model_name:
-            entry = self.per_model.setdefault(model_name, ModelStats())
-            entry.request_count += 1
-            entry.input_tokens += input_toks
-            entry.output_tokens += output_toks
-
-    def merge(self, other: SessionStats) -> None:
-        """Merge another `SessionStats` into this one (mutates *self*).
-
-        Used to accumulate per-turn stats into a session-level total.
-
-        Args:
-            other: The stats to fold in.
-        """
-        self.request_count += other.request_count
-        self.input_tokens += other.input_tokens
-        self.output_tokens += other.output_tokens
-        self.wall_time_seconds += other.wall_time_seconds
-        for model, ms in other.per_model.items():
-            entry = self.per_model.setdefault(model, ModelStats())
-            entry.request_count += ms.request_count
-            entry.input_tokens += ms.input_tokens
-            entry.output_tokens += ms.output_tokens
-
-
-def format_token_count(count: int) -> str:
-    """Format a token count into a human-readable short string.
-
-    Args:
-        count: Number of tokens.
-
-    Returns:
-        Formatted string like `"12.5K"`, `"1.2M"`, or `"500"`.
-    """
-    if count >= 1_000_000:  # noqa: PLR2004
-        return f"{count / 1_000_000:.1f}M"
-    if count >= 1000:  # noqa: PLR2004
-        return f"{count / 1000:.1f}K"
-    return str(count)
-
-
-def print_usage_table(
-    stats: SessionStats,
-    wall_time: float,
-    console: Console,
-) -> None:
-    """Print a model-usage stats table to a Rich console.
-
-    When the session spans multiple models each gets its own row with a
-    totals row appended; single-model sessions show one row.
-
-    Args:
-        stats: Cumulative session stats.
-        wall_time: Total wall-clock time in seconds.
-        console: Rich console for output.
-    """
-    from rich.table import Table
-
-    has_time = wall_time >= 0.1  # noqa: PLR2004
-    if not (stats.request_count or stats.input_tokens or has_time):
-        return
-
-    if stats.per_model:
-        multi_model = len(stats.per_model) > 1
-
-        table = Table(
-            show_header=True,
-            header_style="bold",
-            box=None,
-            padding=(0, 2, 0, 0),
-            show_edge=False,
-        )
-        table.add_column("Model", style="dim")
-        table.add_column("Reqs", justify="right", style="dim")
-        table.add_column("InputTok", justify="right", style="dim")
-        table.add_column("OutputTok", justify="right", style="dim")
-
-        if multi_model:
-            for model_name, ms in stats.per_model.items():
-                table.add_row(
-                    model_name,
-                    str(ms.request_count),
-                    format_token_count(ms.input_tokens),
-                    format_token_count(ms.output_tokens),
-                )
-            table.add_row(
-                "Total",
-                str(stats.request_count),
-                format_token_count(stats.input_tokens),
-                format_token_count(stats.output_tokens),
-            )
-        else:
-            model_label = next(iter(stats.per_model))
-            table.add_row(
-                model_label,
-                str(stats.request_count),
-                format_token_count(stats.input_tokens),
-                format_token_count(stats.output_tokens),
-            )
-
-        console.print()
-        console.print("[bold]Usage Stats[/bold]")
-        console.print(table)
-    if has_time:
-        console.print()
-        console.print(f"[dim]Agent active  {wall_time:.1f}s[/dim]")
-
 
 # Type alias matching HITLResponse["decisions"] element type
 HITLDecision = ApproveDecision | EditDecision | RejectDecision
@@ -250,11 +75,6 @@ def _build_stream_config(
 
 def _is_summarization_chunk(metadata: dict | None) -> bool:
     """Check if a message chunk is from summarization middleware.
-
-    The summarization model is invoked with
-    `config={"metadata": {"lc_source": "summarization"}}`
-    (see `langchain.agents.middleware.summarization`), which
-    LangChain's callback system merges into the stream metadata dict.
 
     Args:
         metadata: The metadata dict from the stream chunk.
@@ -351,26 +171,9 @@ class TextualUIAdapter:
         self._current_tool_messages: dict[str, ToolCallMessage] = {}
         self._token_tracker: Any = None
 
-    def set_token_tracker(self, tracker: Any) -> None:  # noqa: ANN401  # Dynamic tracker type from Textual
+    def set_token_tracker(self, tracker: Any) -> None:
         """Set the token tracker for usage tracking."""
         self._token_tracker = tracker
-
-    def finalize_pending_tools_with_error(self, error: str) -> None:
-        """Mark all pending/running tool widgets as error and clear tracking.
-
-        This is used as a safety net when an unexpected exception aborts
-        streaming before matching `ToolMessage` results are received.
-
-        Args:
-            error: Error text to display in each pending tool widget.
-        """
-        for tool_msg in list(self._current_tool_messages.values()):
-            tool_msg.set_error(error)
-        self._current_tool_messages.clear()
-
-        # Clear active streaming message to avoid stale "active" state in the store.
-        if self._set_active_message:
-            self._set_active_message(None)
 
 
 def _build_interrupted_ai_message(
@@ -391,7 +194,7 @@ def _build_interrupted_ai_message(
 
     # Reconstruct tool_calls from displayed tool messages
     tool_calls = []
-    for tool_id, tool_widget in list(current_tool_messages.items()):
+    for tool_id, tool_widget in current_tool_messages.items():
         tool_calls.append(
             {
                 "id": tool_id,
@@ -411,13 +214,13 @@ def _build_interrupted_ai_message(
 
 async def execute_task_textual(
     user_input: str,
-    agent: Any,  # noqa: ANN401  # Dynamic agent graph type
+    agent: Any,
     assistant_id: str | None,
-    session_state: Any,  # noqa: ANN401  # Dynamic session state type
+    session_state: Any,
     adapter: TextualUIAdapter,
-    backend: Any = None,  # noqa: ANN401  # Dynamic backend type
+    backend: Any = None,
     image_tracker: ImageTracker | None = None,
-) -> SessionStats:
+) -> None:
     """Execute a task with output directed to Textual UI.
 
     This is the Textual-compatible version of execute_task() that uses
@@ -431,10 +234,6 @@ async def execute_task_textual(
         adapter: The TextualUIAdapter for UI operations
         backend: Optional backend for file operations
         image_tracker: Optional tracker for images
-
-    Returns:
-        Stats accumulated over this turn (request count, token counts,
-            wall-clock time).
 
     Raises:
         ValidationError: If HITL request validation fails (re-raised).
@@ -466,7 +265,7 @@ async def execute_task_textual(
                         f"\n### {file_path.name}\n"
                         f"Path: `{file_path}`\n```\n{content}\n```"
                     )
-            except Exception as e:  # noqa: BLE001  # Resilient adapter error handling
+            except Exception as e:
                 context_parts.append(
                     f"\n### {file_path.name}\n[Error reading file: {e}]"
                 )
@@ -488,8 +287,6 @@ async def execute_task_textual(
 
     captured_input_tokens = 0
     captured_output_tokens = 0
-    turn_stats = SessionStats()
-    start_time = time.monotonic()
 
     # Show spinner
     if adapter._set_spinner:
@@ -516,9 +313,6 @@ async def execute_task_textual(
         "messages": [{"role": "user", "content": message_content}]
     }
 
-    # Track summarization lifecycle so spinner status and notification stay in sync.
-    summarization_in_progress = False
-
     try:
         while True:
             interrupt_occurred = False
@@ -533,7 +327,7 @@ async def execute_task_textual(
                 config=config,
                 durability="exit",
             ):
-                if not isinstance(chunk, tuple) or len(chunk) != 3:  # noqa: PLR2004  # Retry count threshold
+                if not isinstance(chunk, tuple) or len(chunk) != 3:
                     continue
 
                 namespace, current_stream_mode, data = chunk
@@ -566,7 +360,7 @@ async def execute_task_textual(
                                         validated_request
                                     )
                                     interrupt_occurred = True
-                                except ValidationError:  # noqa: TRY203  # Re-raise preserves exception context in handler
+                                except ValidationError:
                                     raise
 
                     # Check for todo updates (not yet implemented in Textual UI)
@@ -584,36 +378,14 @@ async def execute_task_textual(
                     if not is_main_agent:
                         continue
 
-                    if not isinstance(data, tuple) or len(data) != 2:  # noqa: PLR2004  # Tool call part index
+                    if not isinstance(data, tuple) or len(data) != 2:
                         continue
 
                     message, metadata = data
 
-                    # Filter out summarization model output, but keep UI feedback.
-                    # The summarization model streams AIMessage chunks tagged
-                    # with lc_source="summarization" in the callback metadata.
-                    # These are hidden from the user; only the spinner and a
-                    # notification widget provide feedback.
+                    # Filter out summarization LLM output
                     if _is_summarization_chunk(metadata):
-                        if not summarization_in_progress:
-                            summarization_in_progress = True
-                            if adapter._set_spinner:
-                                await adapter._set_spinner("Summarizing")
                         continue
-
-                    # Regular (non-summarization) chunks resumed — summarization
-                    # has finished. Mount the notification and reset the spinner.
-                    if summarization_in_progress:
-                        summarization_in_progress = False
-                        try:
-                            await adapter._mount_message(SummarizationMessage())
-                        except Exception:
-                            logger.debug(
-                                "Failed to mount summarization notification",
-                                exc_info=True,
-                            )
-                        if adapter._set_spinner:
-                            await adapter._set_spinner("Thinking")
 
                     if isinstance(message, HumanMessage):
                         content = message.text
@@ -649,7 +421,7 @@ async def execute_task_textual(
                             else:
                                 tool_msg.set_error(output_str or "Error")
                             # Clean up - remove from tracking dict after status update
-                            adapter._current_tool_messages.pop(tool_id, None)
+                            del adapter._current_tool_messages[tool_id]
 
                         # Show file operation results - always show diffs in chat
                         if record:
@@ -670,27 +442,24 @@ async def execute_task_textual(
 
                     # Extract token usage (before content_blocks check
                     # - usage may be on any chunk)
-                    if hasattr(message, "usage_metadata"):
+                    if adapter._token_tracker and hasattr(message, "usage_metadata"):
                         usage = message.usage_metadata
                         if usage:
-                            input_toks = usage.get("input_tokens", 0)
-                            output_toks = usage.get("output_tokens", 0)
+                            # Use total_tokens which includes input + output
                             total_toks = usage.get("total_tokens", 0)
-                            active_model = settings.model_name or ""
-                            if input_toks or output_toks:
-                                # Model gives split counts — preferred path
-                                turn_stats.record_request(
-                                    active_model, input_toks, output_toks
-                                )
-                                captured_input_tokens = max(
-                                    captured_input_tokens, input_toks + output_toks
-                                )
-                            elif total_toks:
-                                # Fallback: model gives only total (no split)
-                                turn_stats.record_request(active_model, total_toks, 0)
+                            if total_toks:
                                 captured_input_tokens = max(
                                     captured_input_tokens, total_toks
                                 )
+                            else:
+                                # Fallback to input + output if total not provided
+                                input_toks = usage.get("input_tokens", 0)
+                                output_toks = usage.get("output_tokens", 0)
+                                if input_toks or output_toks:
+                                    total = input_toks + output_toks
+                                    captured_input_tokens = max(
+                                        captured_input_tokens, total
+                                    )
 
                     # Check if this is an AIMessageChunk with content
                     if not hasattr(message, "content_blocks"):
@@ -847,20 +616,6 @@ async def execute_task_textual(
                             pending_text_by_namespace[ns_key] = ""
                             assistant_message_by_namespace.pop(ns_key, None)
 
-            # Reset summarization state if stream ended mid-summarization
-            # (e.g. middleware error, stream exhausted before regular chunks).
-            if summarization_in_progress:
-                summarization_in_progress = False
-                try:
-                    await adapter._mount_message(SummarizationMessage())
-                except Exception:
-                    logger.debug(
-                        "Failed to mount summarization notification",
-                        exc_info=True,
-                    )
-                if adapter._set_spinner:
-                    await adapter._set_spinner("Thinking")
-
             # Flush any remaining text from all namespaces
             for ns_key, pending_text in list(pending_text_by_namespace.items()):
                 if pending_text:
@@ -874,7 +629,7 @@ async def execute_task_textual(
             if interrupt_occurred:
                 any_rejected = False
 
-                for interrupt_id, hitl_request in list(pending_interrupts.items()):
+                for interrupt_id, hitl_request in pending_interrupts.items():
                     action_requests = hitl_request["action_requests"]
 
                     if session_state.auto_approve:
@@ -884,7 +639,7 @@ async def execute_task_textual(
                         ]
                         hitl_response[interrupt_id] = {"decisions": decisions}
                         # Mark all tools as running
-                        for tool_msg in list(adapter._current_tool_messages.values()):
+                        for tool_msg in adapter._current_tool_messages.values():
                             tool_msg.set_running()
                     else:
                         # Batch approval - one dialog for all parallel tool calls
@@ -907,10 +662,7 @@ async def execute_task_textual(
                                     ApproveDecision(type="approve")
                                     for _ in action_requests
                                 ]
-                                tool_msgs = list(
-                                    adapter._current_tool_messages.values()
-                                )
-                                for tool_msg in tool_msgs:
+                                for tool_msg in adapter._current_tool_messages.values():
                                     tool_msg.set_running()
                                 # Mark file ops as approved
                                 for action_request in action_requests:
@@ -928,10 +680,7 @@ async def execute_task_textual(
                                     ApproveDecision(type="approve")
                                     for _ in action_requests
                                 ]
-                                tool_msgs = list(
-                                    adapter._current_tool_messages.values()
-                                )
-                                for tool_msg in tool_msgs:
+                                for tool_msg in adapter._current_tool_messages.values():
                                     tool_msg.set_running()
                                 # Mark file ops as approved
                                 for action_request in action_requests:
@@ -949,41 +698,20 @@ async def execute_task_textual(
                                     RejectDecision(type="reject")
                                     for _ in action_requests
                                 ]
-                                tool_msgs = list(
-                                    adapter._current_tool_messages.values()
-                                )
-                                for tool_msg in tool_msgs:
+                                for tool_msg in adapter._current_tool_messages.values():
                                     tool_msg.set_rejected()
                                 adapter._current_tool_messages.clear()
                                 any_rejected = True
                             else:
-                                logger.warning(
-                                    "Unexpected HITL decision type: %s",
-                                    decision_type,
-                                )
                                 decisions = [
                                     RejectDecision(type="reject")
                                     for _ in action_requests
                                 ]
-                                for tool_msg in list(
-                                    adapter._current_tool_messages.values()
-                                ):
-                                    tool_msg.set_rejected()
-                                adapter._current_tool_messages.clear()
                                 any_rejected = True
                         else:
-                            logger.warning(
-                                "HITL decision was not a dict: %s",
-                                type(decision).__name__,
-                            )
                             decisions = [
                                 RejectDecision(type="reject") for _ in action_requests
                             ]
-                            for tool_msg in list(
-                                adapter._current_tool_messages.values()
-                            ):
-                                tool_msg.set_rejected()
-                            adapter._current_tool_messages.clear()
                             any_rejected = True
 
                         hitl_response[interrupt_id] = {"decisions": decisions}
@@ -1000,8 +728,7 @@ async def execute_task_textual(
                             "Command rejected. Tell the agent what you'd like instead."
                         )
                     )
-                    turn_stats.wall_time_seconds = time.monotonic() - start_time
-                    return turn_stats
+                    return
 
                 stream_input = Command(resume=hitl_response)
             else:
@@ -1015,15 +742,11 @@ async def execute_task_textual(
         if adapter._set_active_message:
             adapter._set_active_message(None)
 
-        # Hide spinner (may still show "Summarizing" if interrupted mid-summary)
-        if adapter._set_spinner:
-            await adapter._set_spinner(None)
-
         await adapter._mount_message(AppMessage("Interrupted by user"))
 
         # Save accumulated state before marking tools as rejected (best-effort)
-        # State update failures shouldn't prevent cleanup
-        try:
+        # Suppress all errors: state update failures shouldn't prevent cleanup
+        with suppress(Exception):
             interrupted_msg = _build_interrupted_ai_message(
                 pending_text_by_namespace,
                 adapter._current_tool_messages,
@@ -1036,8 +759,6 @@ async def execute_task_textual(
                 "Previous operation was cancelled."
             )
             await agent.aupdate_state(config, {"messages": [cancellation_msg]})
-        except Exception:
-            logger.debug("Failed to save interrupted state", exc_info=True)
 
         # Mark tools as rejected AFTER saving state
         for tool_msg in list(adapter._current_tool_messages.values()):
@@ -1045,7 +766,6 @@ async def execute_task_textual(
         adapter._current_tool_messages.clear()
 
         # Report tokens even on interrupt (or restore display if none captured)
-        turn_stats.wall_time_seconds = time.monotonic() - start_time
         if adapter._token_tracker:
             if captured_input_tokens or captured_output_tokens:
                 adapter._token_tracker.add(
@@ -1053,9 +773,10 @@ async def execute_task_textual(
                 )
             else:
                 adapter._token_tracker.show()  # Restore previous value
-        return turn_stats
+        return
 
     except KeyboardInterrupt:
+        # Clear active message immediately so it won't block pruning
         # Clear active message immediately so it won't block pruning
         # If we don't do this, the store still thinks it's actice and protects
         # from pruning, which breaks get_messages_to_prune(), potentially
@@ -1063,15 +784,11 @@ async def execute_task_textual(
         if adapter._set_active_message:
             adapter._set_active_message(None)
 
-        # Hide spinner (may still show "Summarizing" if interrupted mid-summary)
-        if adapter._set_spinner:
-            await adapter._set_spinner(None)
-
         await adapter._mount_message(AppMessage("Interrupted by user"))
 
         # Save accumulated state before marking tools as rejected (best-effort)
-        # State update failures shouldn't prevent cleanup
-        try:
+        # Suppress all errors: state update failures shouldn't prevent cleanup
+        with suppress(Exception):
             interrupted_msg = _build_interrupted_ai_message(
                 pending_text_by_namespace,
                 adapter._current_tool_messages,
@@ -1084,8 +801,6 @@ async def execute_task_textual(
                 "Previous operation was cancelled."
             )
             await agent.aupdate_state(config, {"messages": [cancellation_msg]})
-        except Exception:
-            logger.debug("Failed to save interrupted state", exc_info=True)
 
         # Mark tools as rejected AFTER saving state
         for tool_msg in list(adapter._current_tool_messages.values()):
@@ -1093,7 +808,6 @@ async def execute_task_textual(
         adapter._current_tool_messages.clear()
 
         # Report tokens even on interrupt (or restore display if none captured)
-        turn_stats.wall_time_seconds = time.monotonic() - start_time
         if adapter._token_tracker:
             if captured_input_tokens or captured_output_tokens:
                 adapter._token_tracker.add(
@@ -1101,13 +815,11 @@ async def execute_task_textual(
                 )
             else:
                 adapter._token_tracker.show()  # Restore previous value
-        return turn_stats
+        return
 
-    # Update token tracker and return stats
-    turn_stats.wall_time_seconds = time.monotonic() - start_time
+    # Update token tracker
     if adapter._token_tracker and (captured_input_tokens or captured_output_tokens):
         adapter._token_tracker.add(captured_input_tokens, captured_output_tokens)
-    return turn_stats
 
 
 async def _flush_assistant_text_ns(
