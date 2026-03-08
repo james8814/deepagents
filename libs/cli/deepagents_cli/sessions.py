@@ -1152,6 +1152,7 @@ async def list_threads_command(
     table.add_column("Thread ID", style="bold")
     table.add_column("Agent")
     table.add_column("Messages", justify="right")
+<<<<<<< HEAD
     if verbose:
         table.add_column("Created")
     table.add_column("Updated" if sort_by == "updated" else "Last Used")
