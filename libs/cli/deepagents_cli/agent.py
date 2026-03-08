@@ -50,6 +50,9 @@ DEFAULT_AGENT_NAME = "agent"
 REQUIRE_COMPACT_TOOL_APPROVAL: bool = True
 """When `True`, `compact_conversation` requires HITL approval like other gated tools."""
 
+DEFAULT_AGENT_NAME = "agent"
+"""The default agent name used when no `-a` flag is provided."""
+
 
 def list_agents() -> None:
     """List all available agents."""
