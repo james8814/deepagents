@@ -675,7 +675,7 @@ class SkillsMiddleware(AgentMiddleware):
         ```python
         from deepagents.backends.filesystem import FilesystemBackend
 
-        backend = FilesystemBackend(root_dir="/path/to/skills")
+        backend = FilesystemBackend(root_dir="/path/to/skills", virtual_mode=True)
         middleware = SkillsMiddleware(
             backend=backend,
             sources=[

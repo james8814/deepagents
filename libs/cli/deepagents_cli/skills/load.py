@@ -85,7 +85,9 @@ def list_skills(
     # 0. Built-in skills (<package>/built_in_skills/) - lowest priority
     if built_in_skills_dir and built_in_skills_dir.exists():
         try:
-            built_in_backend = FilesystemBackend(root_dir=str(built_in_skills_dir))
+            built_in_backend = FilesystemBackend(
+                root_dir=str(built_in_skills_dir), virtual_mode=False
+            )
             built_in_skills = list_skills_from_backend(
                 backend=built_in_backend, source_path="."
             )
@@ -112,7 +114,9 @@ def list_skills(
     # 1. User deepagents skills (~/.deepagents/{agent}/skills/)
     if user_skills_dir and user_skills_dir.exists():
         try:
-            user_backend = FilesystemBackend(root_dir=str(user_skills_dir))
+            user_backend = FilesystemBackend(
+                root_dir=str(user_skills_dir), virtual_mode=False
+            )
             user_skills = list_skills_from_backend(
                 backend=user_backend, source_path="."
             )
@@ -132,7 +136,9 @@ def list_skills(
     # 2. User agent skills (~/.agents/skills/) - overrides user deepagents
     if user_agent_skills_dir and user_agent_skills_dir.exists():
         try:
-            user_agent_backend = FilesystemBackend(root_dir=str(user_agent_skills_dir))
+            user_agent_backend = FilesystemBackend(
+                root_dir=str(user_agent_skills_dir), virtual_mode=False
+            )
             user_agent_skills = list_skills_from_backend(
                 backend=user_agent_backend, source_path="."
             )
@@ -152,7 +158,9 @@ def list_skills(
     # 3. Project deepagents skills (.deepagents/skills/)
     if project_skills_dir and project_skills_dir.exists():
         try:
-            project_backend = FilesystemBackend(root_dir=str(project_skills_dir))
+            project_backend = FilesystemBackend(
+                root_dir=str(project_skills_dir), virtual_mode=False
+            )
             project_skills = list_skills_from_backend(
                 backend=project_backend, source_path="."
             )
@@ -173,7 +181,7 @@ def list_skills(
     if project_agent_skills_dir and project_agent_skills_dir.exists():
         try:
             project_agent_backend = FilesystemBackend(
-                root_dir=str(project_agent_skills_dir)
+                root_dir=str(project_agent_skills_dir), virtual_mode=False
             )
             project_agent_skills = list_skills_from_backend(
                 backend=project_agent_backend, source_path="."

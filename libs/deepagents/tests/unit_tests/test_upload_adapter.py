@@ -100,7 +100,7 @@ class TestResolveBackend:
         """Test resolving an already-instantiated backend."""
         from deepagents.backends import FilesystemBackend
 
-        backend = FilesystemBackend(root_dir="/tmp")
+        backend = FilesystemBackend(root_dir="/tmp", virtual_mode=True)
 
         result = _resolve_backend(backend)
 
@@ -131,7 +131,7 @@ class TestSelectStrategy:
         """Test selecting direct strategy for FilesystemBackend."""
         from deepagents.backends import FilesystemBackend
 
-        backend = FilesystemBackend(root_dir=str(tmp_path))
+        backend = FilesystemBackend(root_dir=str(tmp_path), virtual_mode=True)
 
         strategy = _select_strategy(backend)
 
@@ -154,7 +154,7 @@ class TestSelectStrategy:
         from deepagents.backends import CompositeBackend, FilesystemBackend
 
         backend = CompositeBackend(
-            default=FilesystemBackend(root_dir=str(tmp_path)),
+            default=FilesystemBackend(root_dir=str(tmp_path), virtual_mode=True),
             routes={}
         )
 
@@ -167,7 +167,7 @@ class TestSelectStrategy:
         from deepagents.backends import FilesystemBackend
 
         # Use a real backend that has upload_files implemented
-        backend = FilesystemBackend(root_dir="/tmp")
+        backend = FilesystemBackend(root_dir="/tmp", virtual_mode=True)
 
         strategy = _select_strategy(backend)
 

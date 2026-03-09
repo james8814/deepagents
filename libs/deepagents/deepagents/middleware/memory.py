@@ -19,7 +19,7 @@ from deepagents.backends.filesystem import FilesystemBackend
 # Security: FilesystemBackend allows reading/writing from the entire filesystem.
 # Either ensure the agent is running within a sandbox OR add human-in-the-loop (HIL)
 # approval to file operations.
-backend = FilesystemBackend(root_dir="/")
+backend = FilesystemBackend(root_dir="/", virtual_mode=True)
 
 middleware = MemoryMiddleware(
     backend=backend,

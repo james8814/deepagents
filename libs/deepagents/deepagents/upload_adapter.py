@@ -13,7 +13,7 @@ Design Principles:
 Example:
     >>> from deepagents.upload_adapter import upload_files
     >>> from deepagents.backends import FilesystemBackend
-    >>> backend = FilesystemBackend(root_dir="/workspace")
+    >>> backend = FilesystemBackend(root_dir="/workspace", virtual_mode=True)
     >>> results = upload_files(backend, [("/uploads/file.txt", b"content")])
     >>> print(results[0].success)
     True

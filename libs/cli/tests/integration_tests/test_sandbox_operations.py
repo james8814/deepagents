@@ -18,8 +18,10 @@ import pytest
 from deepagents.backends.protocol import SandboxBackendProtocol
 
 from deepagents_cli.integrations.sandbox_factory import create_sandbox
+from tests.utils import skip_if_no_daytona
 
 
+@skip_if_no_daytona
 class TestSandboxOperations:
     """Test core sandbox file operations using a single sandbox instance."""
 

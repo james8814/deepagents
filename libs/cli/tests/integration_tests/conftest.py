@@ -1,10 +1,17 @@
-"""Pytest configuration for benchmark tests."""
+"""Pytest configuration for integration tests."""
+
+from __future__ import annotations
 
 import os
-from collections.abc import Generator
+from typing import TYPE_CHECKING
 
 import pytest
 from langsmith import Client, get_tracing_context
+
+# Intentionally no re-exports here; import skip utilities directly in tests when needed
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 
 @pytest.fixture(scope="session", autouse=True)

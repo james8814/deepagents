@@ -242,6 +242,38 @@ def send_email(to: str, msg: str, *, priority: str = "normal") -> bool:
     """
 ```
 
+### Exception Handling Pattern
+
+Follow these rules for exception handling:
+
+1. **Always define error messages as variables before raising** (EM101/EM102 compliance)
+2. **Always preserve exception chains with `raise ... from err`**
+3. **Prefer specific exception types over broad `Exception` catches**
+
+```python
+# Good: Message variable, specific exception, chain preserved
+try:
+    with file_path.open("rb"):
+        pass
+except FileNotFoundError as err:
+    msg = f"File not found: {path}"
+    raise ValidationError(msg) from err
+except IsADirectoryError as err:
+    msg = f"Not a file: {path}"
+    raise ValidationError(msg) from err
+except OSError as err:
+    msg = f"File access error: {path}"
+    raise ValidationError(msg) from err
+
+# Bad: Inline message, no exception chain
+raise ValidationError(f"File not found: {path}")
+```
+
+**Rationale**:
+- Variables make messages reusable (e.g., for logging)
+- Exception chains preserve debugging context
+- Specific exceptions improve error handling granularity
+
 ## Testing Guidelines
 
 **Test structure**:

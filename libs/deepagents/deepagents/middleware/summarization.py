@@ -24,7 +24,7 @@ from deepagents.middleware.summarization import (
 )
 from deepagents.backends import FilesystemBackend
 
-backend = FilesystemBackend(root_dir="/data")
+backend = FilesystemBackend(root_dir="/data", virtual_mode=True)
 
 summ = SummarizationMiddleware(
     model="gpt-4o-mini",
