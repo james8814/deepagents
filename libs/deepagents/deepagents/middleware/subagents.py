@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Middleware for providing subagents to an agent via a `task` tool."""
 
+import os
 import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Annotated, Any, NotRequired, TypedDict, Unpack, cast
@@ -11,7 +12,7 @@ from langchain.agents.middleware.types import AgentMiddleware, ContextT, ModelRe
 from langchain.chat_models import init_chat_model
 from langchain.tools import BaseTool, ToolRuntime
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import Runnable
 from langchain_core.tools import StructuredTool
 from langgraph.types import Command
@@ -128,7 +129,27 @@ DEFAULT_SUBAGENT_PROMPT = "In order to complete the objective that the user asks
 #    be explicitly filtered from runtime.state when invoking a subagent to prevent parent state
 #    from leaking to child agents (e.g., the general-purpose subagent loads its own skills via
 #    SkillsMiddleware).
-_EXCLUDED_STATE_KEYS = {"messages", "todos", "structured_response", "skills_metadata", "memory_contents"}
+# 4. The subagent_logs key is excluded when passing parent state to subagents to prevent
+#    log pollution from parent agents affecting child agents (each tracks its own logs).
+_EXCLUDED_STATE_KEYS = {"messages", "todos", "structured_response", "skills_metadata", "memory_contents", "subagent_logs"}
+
+# Feature flag: enable SubAgent execution logging via environment variable
+# Set DEEPAGENTS_SUBAGENT_LOGGING=1 to capture tool calls and results for display/debugging
+_ENABLE_SUBAGENT_LOGGING = os.getenv("DEEPAGENTS_SUBAGENT_LOGGING", "").strip() == "1"
+
+# Sensitive keys to redact in logs (values replaced with "***")
+_SENSITIVE_KEYS = {
+    "token",
+    "secret",
+    "password",
+    "api_key",
+    "authorization",
+    "private_key",
+    "credentials",
+    "access_token",
+    "refresh_token",
+    "jwt",
+}
 
 TASK_TOOL_DESCRIPTION = """Launch an ephemeral subagent to handle complex, multi-step independent tasks with isolated context windows.
 
@@ -375,6 +396,87 @@ def _get_subagents_legacy(
     return specs
 
 
+def _redact_sensitive_fields(data: object) -> object:
+    """Recursively redact sensitive fields in nested data structures.
+
+    Replaces values of sensitive keys (like password, api_key, token, etc.)
+    with "***" to prevent credential leakage in logs.
+
+    Args:
+        data: A Python object (dict, list, primitive, etc.).
+
+    Returns:
+        The data with sensitive values replaced.
+    """
+    if isinstance(data, dict):
+        return {k: "***" if isinstance(k, str) and k.lower() in _SENSITIVE_KEYS else _redact_sensitive_fields(v) for k, v in data.items()}
+    if isinstance(data, list):
+        return [_redact_sensitive_fields(item) for item in data]
+    return data
+
+
+def _truncate_text(text: str, max_length: int = 500) -> str:
+    """Truncate long text output for logging.
+
+    Args:
+        text: The text to potentially truncate.
+        max_length: Maximum length before truncation. Defaults to 500 chars.
+
+    Returns:
+        The original text if <= max_length, otherwise truncated with indicator.
+    """
+    if isinstance(text, str) and len(text) > max_length:
+        return text[:max_length] + f"... [output truncated, {len(text)} chars total]"
+    return text
+
+
+def _extract_subagent_logs(messages: list) -> list[dict[str, Any]]:
+    """Extract tool call and result entries from subagent message history.
+
+    This function processes the subagent's message history and extracts paired
+    tool calls and their results, with automatic redaction of sensitive fields
+    and truncation of large outputs.
+
+    Args:
+        messages: List of langchain messages from subagent execution.
+
+    Returns:
+        List of log entries, each containing:
+        - For tool calls: {type: "tool_call", tool_name, tool_input, tool_call_id}
+        - For results: {type: "tool_result", tool_call_id, tool_output, status}
+    """
+    entries: list[dict[str, Any]] = []
+
+    # Process all messages except the last (which is typically the final summary)
+    for msg in messages[:-1]:
+        # Extract tool calls from AIMessage
+        if isinstance(msg, AIMessage) and msg.tool_calls:
+            for call in msg.tool_calls:
+                tool_call_id = call.get("id")
+                entries.append(
+                    {
+                        "type": "tool_call",
+                        "tool_name": call.get("name"),
+                        "tool_input": _redact_sensitive_fields(call.get("args", {})),
+                        "tool_call_id": tool_call_id,
+                    }
+                )
+        # Extract tool results from ToolMessage
+        elif isinstance(msg, ToolMessage):
+            # Truncate long outputs to prevent state bloat
+            truncated_output = _truncate_text(msg.content) if isinstance(msg.content, str) else str(msg.content)
+            entries.append(
+                {
+                    "type": "tool_result",
+                    "tool_call_id": msg.tool_call_id,
+                    "tool_output": truncated_output,
+                    "status": "success",
+                }
+            )
+
+    return entries
+
+
 def _build_task_tool(  # noqa: C901
     subagents: list[_SubagentSpec],
     task_description: str | None = None,
@@ -414,6 +516,14 @@ def _build_task_tool(  # noqa: C901
             raise ValueError(error_msg)
 
         state_update = {k: v for k, v in result.items() if k not in _EXCLUDED_STATE_KEYS}
+
+        # Extract and capture SubAgent execution logs if feature is enabled
+        if _ENABLE_SUBAGENT_LOGGING:
+            messages = result.get("messages", [])
+            log_entries = _extract_subagent_logs(messages)
+            if log_entries:
+                state_update["subagent_logs"] = {tool_call_id: log_entries}
+
         # Strip trailing whitespace to prevent API errors with Anthropic
         message_text = result["messages"][-1].text.rstrip() if result["messages"][-1].text else ""
         return Command(
