@@ -187,6 +187,7 @@ jobs:
     with:
       working-directory: "libs/deepagents"
       python-version: ${{ matrix.python-version }}
+      coverage: ${{ matrix.python-version == '3.12' }}
 
   test-cli:
     name: "🧪 Test cli"
@@ -200,6 +201,7 @@ jobs:
     with:
       working-directory: "libs/cli"
       python-version: ${{ matrix.python-version }}
+      coverage: ${{ matrix.python-version == '3.12' }}
 
   test-harbor:
     name: "🧪 Test harbor"
@@ -213,6 +215,7 @@ jobs:
     with:
       working-directory: "libs/harbor"
       python-version: ${{ matrix.python-version }}
+      coverage: ${{ matrix.python-version == '3.12' }}
 
   test-daytona:
     name: "🧪 Test daytona"
@@ -226,6 +229,7 @@ jobs:
     with:
       working-directory: "libs/partners/daytona"
       python-version: ${{ matrix.python-version }}
+      coverage: ${{ matrix.python-version == '3.12' }}
 
   test-modal:
     name: "🧪 Test modal"
@@ -239,6 +243,7 @@ jobs:
     with:
       working-directory: "libs/partners/modal"
       python-version: ${{ matrix.python-version }}
+      coverage: ${{ matrix.python-version == '3.12' }}
 
   test-runloop:
     name: "🧪 Test runloop"
@@ -252,6 +257,7 @@ jobs:
     with:
       working-directory: "libs/partners/runloop"
       python-version: ${{ matrix.python-version }}
+      coverage: ${{ matrix.python-version == '3.12' }}
 
   # Final status check - ensures all jobs passed
   ci_success:
