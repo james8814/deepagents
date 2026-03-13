@@ -37,6 +37,15 @@ Twitter = "https://x.com/LangChain"
 Slack = "https://www.langchain.com/join-community"
 Reddit = "https://www.reddit.com/r/LangChain/"
 
+[project.optional-dependencies]
+converters = [
+  "pdfplumber>=0.10.0",
+  "python-docx>=1.0.0",
+  "openpyxl>=3.1.0",
+  "python-pptx>=0.6.23",
+  "puremagic>=1.20",
+]
+
 
 [dependency-groups]
 test = [

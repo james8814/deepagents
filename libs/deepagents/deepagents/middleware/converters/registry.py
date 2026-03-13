@@ -119,10 +119,6 @@ def get_default_registry() -> ConverterRegistry:
     return _DEFAULT_REGISTRY
 
 
-# For backwards compatibility and direct access
-DEFAULT_CONVERTER_REGISTRY = property(lambda self: get_default_registry())
-
-
 class ConverterRegistryManager:
     """Manager for converter registry with support for custom converters.
 

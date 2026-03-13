@@ -91,11 +91,19 @@ make coverage
 - **Security validation**: File type detection using magic bytes (via `puremagic`), 100MB size limit, unauthorized type blocking
 - **Type-specific guidance**: After upload, CLI shows guidance based on file type:
   - Text files: Use `ls /uploads` and `read_file` to access
-  - Binary files (images/audio/video): Use `execute` with external tools
-  - PDFs: Use `execute` with `pdftotext` or similar
+  - Binary documents (PDF/DOCX/XLSX/PPTX): Use `read_file` directly — auto-converts to Markdown (requires `pip install deepagents[converters]`)
+  - Images (.png/.jpg/.gif/.webp): `read_file` returns multimodal ImageBlock
   - Archives: Use `execute` with `unzip`, `tar`, etc.
-  - Office documents: Use `execute` with `pandoc`
+  - Audio/Video: Use `execute` with external tools
 - **Large file handling**: Tool results >20k tokens are written to `/large_tool_results/{tool_call_id}`
+
+**Binary Document Conversion** (2026-03-13): `read_file` auto-converts binary documents via built-in Converters:
+- Formats: PDF (pdfplumber), DOCX (python-docx), XLSX (openpyxl), PPTX (python-pptx)
+- Flow: `download_files()` → tempfile → `detect_mime_type()` → `registry.get()` → `converter.convert()` → Markdown
+- Pagination: `offset=N` (N>0) maps to `convert_page(page=N)` for PDF/PPTX (1-indexed)
+- Install: `pip install deepagents[converters]`
+- Implementation: `_convert_document_sync/async` in `filesystem.py` lines 414-570
+- Tests: `tests/unit_tests/middleware/converters/test_converter_integration.py` (23 tests)
 
 **Backends** (pluggable storage/execution):
 - `BackendProtocol` - Base protocol: `ls_info`, `read`, `write`, `edit`, `grep_raw`, `glob_info`
@@ -366,3 +374,9 @@ Scopes: `deepagents`, `sdk`, `deepagents-cli`, `cli`, `harbor`, `acp`, `examples
 - **User Guide**: `docs/UPLOAD_ADAPTER_GUIDE.md`
 - **Implementation**: `docs/attachment_function_docs/UNIVERSAL_UPLOAD_ADAPTER_V5.md`
 - **Final Report**: `docs/attachment_function_docs/FINAL_DELIVERY_REPORT.md`
+
+**Converter Integration Documentation** (2026-03-13):
+- **Changelog**: `CHANGELOG_CONVERTER_INTEGRATION.md`
+- **API Reference (Converter 章节)**: `docs/api/API_REFERENCE.md`
+- **Design Document**: `docs/unified_file_reader/UNIFIED_FILE_READER_DESIGN.md`
+- **Migration Plan V3.1**: `docs/tmp/converter-migration-plan-v3.md`

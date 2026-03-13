@@ -1,7 +1,7 @@
 # 外部团队 API 使用指南
 
-**版本**: 1.0.0
-**日期**: 2026-03-07
+**版本**: 1.1.0
+**日期**: 2026-03-13
 **目标读者**: 使用 DeepAgents 作为依赖的外部项目团队
 
 ---
@@ -263,11 +263,146 @@ def safe_load_skill(agent, skill_name):
 
 ## 版本兼容性
 
-| DeepAgents 版本 | 动态加载支持 | 推荐做法 |
-|----------------|-------------|----------|
-| < 0.4.0 | ❌ 不支持 | 升级版本或跳过相关测试 |
-| 0.4.0 - 0.4.3 | ⚠️ 部分支持 | 使用 `expose_dynamic_tools=True` |
-| ≥ 0.4.4 | ✅ 完全支持 | 使用本指南的所有功能 |
+| DeepAgents 版本 | 动态加载支持 | 文档转换支持 | 推荐做法 |
+|----------------|-------------|-------------|----------|
+| < 0.4.0 | ❌ 不支持 | ❌ 不支持 | 升级版本 |
+| 0.4.0 - 0.4.3 | ⚠️ 部分支持 | ❌ Converter 模块存在但未集成 | 使用 `expose_dynamic_tools=True` |
+| 0.4.4 - 0.4.10 | ✅ 完全支持 | ❌ Converter 模块存在但未集成 | 升级到最新版本 |
+| ≥ 0.4.11 | ✅ 完全支持 | ✅ read_file 自动转换 | **推荐版本**，安装 `[converters]` 依赖 |
+
+---
+
+## 🆕 二进制文档转换（0.4.11 新增）
+
+### 概述
+
+自 `0.4.11` 起，`read_file` 工具内置了二进制文档自动转换能力。Agent 可以直接读取 PDF、Word、Excel、PowerPoint 等格式，无需手动调用 `execute("pdftotext ...")` 或 `execute("pandoc ...")`。
+
+### ⚠️ 必要操作：安装可选依赖
+
+此功能依赖可选包。**请在升级后执行以下安装命令**：
+
+```bash
+# 安装文档转换依赖（必须）
+pip install deepagents[converters]
+
+# 或者在 requirements.txt / pyproject.toml 中更新
+deepagents[converters]>=0.4.11
+```
+
+**包含的依赖**：
+
+| 包 | 版本要求 | 用途 | 体积 |
+|----|---------|------|------|
+| `pdfplumber` | ≥0.10.0 | PDF 文档解析 | ~2 MB |
+| `python-docx` | ≥1.0.0 | Word (.docx) 文档解析 | ~1 MB |
+| `openpyxl` | ≥3.1.0 | Excel (.xlsx) 表格解析 | ~4 MB |
+| `python-pptx` | ≥0.6.23 | PowerPoint (.pptx) 解析 | ~3 MB |
+| `puremagic` | ≥1.20 | MIME 类型检测（magic bytes） | <1 MB |
+
+**总计约 11 MB**，无系统级依赖（不需要 poppler、tesseract 等）。
+
+### 不安装会怎样？
+
+**不会导致任何错误或崩溃。** 未安装时：
+
+- 现有的文本文件、图片读取行为完全不变
+- 对 PDF/DOCX/XLSX/PPTX 调用 `read_file` 会返回友好的安装提示：
+  ```
+  Error: No converter available for '/uploads/report.pdf' (type: .pdf).
+  Install optional dependencies: pip install deepagents[converters]
+  ```
+- Agent 可以根据此提示自行引导用户安装，或 fallback 到 `execute` 工具
+
+### 支持的文件格式
+
+| 格式 | 扩展名 | 输出 | 分页 |
+|------|--------|------|------|
+| PDF | `.pdf` | Markdown（含表格） | ✅ `offset=N` 读取第 N 页 |
+| Word | `.docx` | Markdown | ❌ 全文输出 |
+| Excel | `.xlsx` | Markdown 表格 | ❌ 全文输出 |
+| PowerPoint | `.pptx` | Markdown（含幻灯片标题） | ✅ `offset=N` 读取第 N 张 |
+| 图片 | `.png/.jpg/.gif/.webp` | 多模态 ImageBlock | — |
+| 文本/代码 | `.py/.md/.txt/.json/...` | 带行号文本（不变） | 按行分页（不变） |
+
+> **注意**：旧版 Office 格式（`.doc`、`.xls`、`.ppt`）的扩展名虽已注册，但底层库不支持 Office 97-2003 格式，转换会失败并返回错误提示。请引导用户转换为新格式后再上传。
+
+### 使用方式
+
+**对 Agent 用户**：无需任何代码变更。Agent 直接调用 `read_file` 即可：
+
+```
+用户：请帮我分析这份 PDF 报告
+Agent：我来读取这份报告。
+      → read_file("/uploads/report.pdf")
+      → 返回 Markdown 格式的报告内容
+```
+
+**对开发者（编程方式调用）**：
+
+```python
+from deepagents import create_deep_agent
+
+# 无需额外配置，read_file 自动检测格式
+agent = create_deep_agent()
+
+result = agent.invoke({
+    "messages": [{"role": "user", "content": "读取 /uploads/report.pdf"}]
+})
+# Agent 将调用 read_file("/uploads/report.pdf") → 返回 Markdown
+```
+
+**分页读取大型 PDF**：
+
+```python
+# Agent 可以按页读取，避免上下文溢出
+# read_file("/uploads/long_report.pdf", offset=1)  → 第 1 页
+# read_file("/uploads/long_report.pdf", offset=2)  → 第 2 页
+# offset=0 或不传 → 全文
+```
+
+### 自定义 Converter（高级）
+
+如需支持额外格式，可注册自定义转换器：
+
+```python
+from pathlib import Path
+from deepagents.middleware.converters import BaseConverter, ConverterRegistryManager
+
+class EPubConverter(BaseConverter):
+    def convert(self, path: Path, raw_content: str | bytes | None = None) -> str:
+        import ebooklib
+        from ebooklib import epub
+        book = epub.read_epub(str(path))
+        # ... 提取文本并转为 Markdown
+        return markdown_text
+
+manager = ConverterRegistryManager()
+manager.register("application/epub+zip", EPubConverter())
+```
+
+### 常见问题
+
+#### Q: 安装 `deepagents[converters]` 后需要重启服务吗？
+
+A: 是的。Converter 注册表在首次调用时惰性初始化，安装后需要重启 Python 进程使新包生效。
+
+#### Q: 远程沙箱（Daytona/Modal）中如何安装？
+
+A: 在沙箱的 Dockerfile 或初始化脚本中添加：
+```dockerfile
+RUN pip install deepagents[converters]
+```
+
+#### Q: 转换大文件会不会阻塞事件循环？
+
+A: 不会。async 路径通过 `asyncio.to_thread` 将 CPU 密集型转换卸载到线程池。sync 路径在当前线程执行，如果调用方使用 async API 则自动走 async 路径。
+
+#### Q: 临时文件会不会泄漏？
+
+A: 不会。转换使用 `tempfile.mkstemp()` + `finally: unlink()`，即使转换过程抛出异常也保证清理。
+
+---
 
 ## 迁移指南
 
@@ -315,19 +450,22 @@ def safe_load_skill(agent, skill_name):
 
 ## 相关文档
 
+- [API 参考文档（含 Converter API）](API_REFERENCE.md)
 - [动态加载问题定位指南](../integrations/skills/dynamic_loading_guide.md)
 - [SkillsMiddleware V2 升级方案](../skillsmiddleware_docs/DeepAgents_SkillsMiddlewareV2升级设计方案.md)
-- [API 参考文档](API_REFERENCE.md)
+- [统一文件读取器设计文档](../unified_file_reader/UNIFIED_FILE_READER_DESIGN.md)
+- [Converter 集成 Changelog](../../CHANGELOG_CONVERTER_INTEGRATION.md)
 
 ## 支持与反馈
 
 如果您在集成过程中遇到问题：
 
-1. **检查版本**: 确保使用最新版 DeepAgents
-2. **查看日志**: 启用调试模式获取详细信息
-3. **验证配置**: 对照本指南检查参数设置
-4. **提交问题**: 在项目仓库创建 Issue，包含错误详情
+1. **检查版本**: 确保使用最新版 DeepAgents (`pip show deepagents`)
+2. **检查依赖**: 确认 `[converters]` 已安装 (`pip show pdfplumber python-docx openpyxl python-pptx puremagic`)
+3. **查看日志**: 启用调试模式获取详细信息 (`logging.getLogger("deepagents").setLevel("DEBUG")`)
+4. **验证配置**: 对照本指南检查参数设置
+5. **提交问题**: 在项目仓库创建 Issue，包含错误详情和版本信息
 
 ---
 
-*本指南最后更新：2026-03-07*
+*本指南最后更新：2026-03-13*

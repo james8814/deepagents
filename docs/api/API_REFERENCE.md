@@ -1,7 +1,7 @@
 # DeepAgents API 参考文档
 
-**版本**: 0.4.4
-**日期**: 2026-03-03
+**版本**: 0.4.11
+**日期**: 2026-03-13
 
 ---
 
@@ -92,7 +92,7 @@ middleware = FilesystemMiddleware(
 
 | 工具 | 说明 | 参数 |
 |------|------|------|
-| `read_file` | 读取文件 | `path: str`, `offset: int`, `limit: int` |
+| `read_file` | 读取文件（支持文本、图片、二进制文档） | `path: str`, `offset: int`, `limit: int` |
 | `write_file` | 写入文件 | `path: str`, `content: str`, `overwrite: bool` |
 | `edit_file` | 编辑文件 | `path: str`, `old_string: str`, `new_string: str` |
 | `ls` | 列出目录 | `path: str`, `long_format: bool` |
@@ -270,26 +270,115 @@ result = UploadResult(
 
 ## Converter API
 
-### 注册自定义转换器
+### read_file 二进制文档支持
 
-```python
-from deepagents.middleware.converters import register_converter, BaseConverter
+`read_file` 工具自动检测二进制文档格式并转换为 Markdown。无需额外代码，agent 直接调用即可。
 
-class MyConverter(BaseConverter):
-    def convert(self, content: bytes, filename: str) -> str:
-        # 转换逻辑
-        return converted_content
+**支持的格式**:
 
-register_converter(".myext", MyConverter())
+| 格式 | 扩展名 | Converter | 分页支持 | 依赖 |
+|------|--------|-----------|----------|------|
+| PDF | `.pdf` | PDFConverter | 支持 | pdfplumber |
+| Word | `.docx` (`.doc` 不支持) | DOCXConverter | 不支持 | python-docx |
+| Excel | `.xlsx` (`.xls` 不支持) | XLSXConverter | 不支持 | openpyxl |
+| PowerPoint | `.pptx` (`.ppt` 不支持) | PPTXConverter | 支持 | python-pptx |
+| 图片 | `.png`, `.jpg`, `.gif`, `.webp` | 多模态 ImageBlock | — | 无 |
+| 文本/代码 | `.py`, `.md`, `.txt`, `.json`, `.yaml`, `.csv`, ... | 直接读取 | 按行分页 | 无 |
+
+**安装可选依赖**:
+
+```bash
+pip install deepagents[converters]
 ```
 
-### 获取转换器
+**使用示例（agent 端）**:
 
 ```python
-from deepagents.middleware.converters import get_converter
+# Agent 调用 read_file 即可，无需关心格式转换细节
+read_file("/uploads/report.pdf")           # → Markdown 全文
+read_file("/uploads/report.pdf", offset=3) # → 第 3 页内容
+read_file("/uploads/data.xlsx")            # → Markdown 表格
+read_file("/uploads/slides.pptx")          # → 全部幻灯片文本
+```
 
-converter = get_converter(".pdf")
-result = converter.convert(file_bytes, "doc.pdf")
+**offset 参数在二进制文档中的语义**:
+
+| offset 值 | 行为 |
+|-----------|------|
+| `0` | 全文转换（默认） |
+| `N` (N>0) | 返回第 N 页（1-indexed），仅 PDF/PPTX 支持 |
+
+### 自定义 Converter
+
+通过 `ConverterRegistryManager` 注册自定义转换器：
+
+```python
+from pathlib import Path
+from deepagents.middleware.converters import BaseConverter, ConverterRegistryManager
+
+class MyFormatConverter(BaseConverter):
+    def convert(self, path: Path, raw_content: str | bytes | None = None) -> str:
+        """将自定义格式转换为 Markdown。"""
+        with open(path, "rb") as f:
+            data = f.read()
+        return f"# Converted from {path.name}\n\n{data.decode()}"
+
+# 注册到 registry manager
+manager = ConverterRegistryManager()
+manager.register("application/x-myformat", MyFormatConverter())
+
+# 获取转换器
+converter = manager.get_converter("application/x-myformat")
+result = converter.convert(Path("/uploads/data.myext"))
+```
+
+### MIME 类型检测
+
+```python
+from deepagents.middleware.converters import detect_mime_type, get_default_registry
+
+# 三层检测：puremagic (内容) → 扩展名映射 → application/octet-stream
+mime_type = detect_mime_type("/uploads/report.pdf", content=raw_bytes)
+
+# 从默认注册表获取转换器
+registry = get_default_registry()
+converter = registry.get(mime_type)  # 返回 BaseConverter 或 None
+```
+
+### BaseConverter 接口
+
+```python
+from abc import abstractmethod
+from pathlib import Path
+
+class BaseConverter:
+    @abstractmethod
+    def convert(self, path: Path, raw_content: str | bytes | None = None) -> str:
+        """全文转换为 Markdown。"""
+
+    def supports_pagination(self) -> bool:
+        """是否支持分页。默认 False。"""
+        return False
+
+    def convert_page(self, path: Path, page: int, raw_content: str | bytes | None = None) -> str:
+        """转换单页（page 为 1-indexed）。"""
+        raise NotImplementedError
+
+    def get_total_pages(self, path: Path) -> int | None:
+        """获取总页数。不支持分页时返回 None。"""
+        return None
+```
+
+### 公开导出
+
+```python
+from deepagents.middleware.converters import (
+    BaseConverter,              # 抽象基类
+    ConverterRegistry,          # 类型别名: dict[str, BaseConverter]
+    ConverterRegistryManager,   # 注册表管理器
+    detect_mime_type,           # MIME 类型检测函数
+    get_default_registry,       # 获取默认注册表（懒加载单例）
+)
 ```
 
 ---
@@ -384,3 +473,5 @@ except FileNotFoundError as e:
 - [部署指南](../deployment/DEPLOYMENT_GUIDE.md)
 - [SDK 迁移指南](../SDK_MIGRATION_GUIDE_v0.4.0.md)
 - [Upload Adapter 指南](../UPLOAD_ADAPTER_GUIDE.md)
+- [统一文件读取器设计](../unified_file_reader/UNIFIED_FILE_READER_DESIGN.md)
+- [Converter 集成 Changelog](../../CHANGELOG_CONVERTER_INTEGRATION.md)

@@ -2,6 +2,9 @@
 # ruff: noqa: E501
 
 import asyncio
+import inspect
+import os
+import tempfile
 import base64
 import concurrent.futures
 from collections.abc import Awaitable, Callable
@@ -56,6 +59,13 @@ IMAGE_MEDIA_TYPES = {
     ".gif": "image/gif",
     ".webp": "image/webp",
 }
+
+BINARY_DOC_EXTENSIONS = frozenset({
+    ".pdf",
+    ".docx", ".doc",
+    ".xlsx", ".xls",
+    ".pptx", ".ppt",
+})
 
 
 # Template for truncation message in read_file
@@ -401,6 +411,165 @@ def _build_evicted_content(message: ToolMessage, replacement_text: str) -> str |
     return [cast("ContentBlock", {"type": "text", "text": replacement_text}), *media_blocks]
 
 
+def _convert_document_sync(backend: BackendProtocol, file_path: str, offset: int = 0) -> str:  # noqa: PLR0911
+    """Convert a binary document to Markdown using built-in converters.
+
+    Downloads raw bytes from the backend, writes to a temp file, and
+    delegates to the appropriate converter based on MIME type detection.
+
+    For paginated formats (PDF, PPTX), ``offset`` is interpreted as a
+    1-indexed page number: offset=0 returns the full document, offset=N
+    returns page N.
+
+    Args:
+        backend: The storage backend to download raw file content from.
+        file_path: Absolute path to the document (may be a virtual path).
+        offset: Page number for paginated formats (1-indexed, 0 = full doc).
+
+    Returns:
+        Converted Markdown text, or an error message string.
+    """
+    responses = backend.download_files([file_path])
+    if not responses or responses[0].content is None:
+        error = responses[0].error if responses else "unknown error"
+        return f"Error reading document '{file_path}': {error}"
+
+    raw_bytes = responses[0].content
+    if raw_bytes[:16] == b"__BINARY_FILE__:":
+        return (
+            f"Error: Binary document '{file_path}' is stored in a text-only backend "
+            f"that does not support binary document conversion. "
+            f"Use FilesystemBackend or a sandbox backend instead."
+        )
+
+    try:
+        from deepagents.middleware.converters import get_default_registry
+        from deepagents.middleware.converters.utils import detect_mime_type
+    except ImportError:
+        ext = Path(file_path).suffix.lower()
+        return (
+            f"Error: Converter module not available for '{file_path}' (type: {ext}). "
+            f"Install optional dependencies: pip install deepagents[converters]"
+        )
+
+    mime_type = detect_mime_type(file_path, content=raw_bytes)
+    registry = get_default_registry()
+    converter = registry.get(mime_type)
+    if converter is None:
+        ext = Path(file_path).suffix.lower()
+        return (
+            f"Error: No converter available for '{file_path}' (type: {ext}). "
+            f"Install optional dependencies: pip install deepagents[converters]"
+        )
+
+    suffix = Path(file_path).suffix
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=suffix)
+    try:
+        with os.fdopen(tmp_fd, "wb") as tmp_f:
+            tmp_f.write(raw_bytes)
+        tmp_file_path = Path(tmp_path)
+        if offset > 0 and converter.supports_pagination():
+            total_pages = converter.get_total_pages(tmp_file_path)
+            if total_pages is not None and offset > total_pages:
+                return f"Error: Page {offset} out of range. Document '{file_path}' has {total_pages} pages."
+            return converter.convert_page(tmp_file_path, page=offset)
+        return converter.convert(tmp_file_path)
+    except ModuleNotFoundError as exc:
+        lib = getattr(exc, "name", "")
+        if lib in {"pdfplumber", "docx", "openpyxl", "pptx"}:
+            return (
+                f"Error: Converter dependency '{lib}' not installed for '{file_path}'. "
+                f"Install optional dependencies: pip install deepagents[converters]"
+            )
+        return f"Error converting document '{file_path}': {exc}"
+    except Exception as exc:  # noqa: BLE001 - catch-all for unknown converter errors
+        return f"Error converting document '{file_path}': {exc}"
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+async def _convert_document_async(backend: BackendProtocol, file_path: str, offset: int = 0) -> str:  # noqa: C901
+    """Async version of `_convert_document_sync` with thread offload.
+
+    Downloads raw bytes via ``adownload_files`` (with ``isawaitable``
+    compat for non-standard backends), then delegates CPU-bound
+    conversion to a thread via ``asyncio.to_thread``.
+
+    Args:
+        backend: The storage backend to download raw file content from.
+        file_path: Absolute path to the document (may be a virtual path).
+        offset: Page number for paginated formats (1-indexed, 0 = full doc).
+
+    Returns:
+        Converted Markdown text, or an error message string.
+    """
+    adownload = getattr(backend, "adownload_files", None)
+    if callable(adownload):
+        maybe = adownload([file_path])
+        responses = await maybe if inspect.isawaitable(maybe) else maybe
+    else:
+        responses = backend.download_files([file_path])
+    if not responses or responses[0].content is None:
+        error = responses[0].error if responses else "unknown error"
+        return f"Error reading document '{file_path}': {error}"
+
+    raw_bytes = responses[0].content
+    if raw_bytes[:16] == b"__BINARY_FILE__:":
+        return (
+            f"Error: Binary document '{file_path}' is stored in a text-only backend "
+            f"that does not support binary document conversion. "
+            f"Use FilesystemBackend or a sandbox backend instead."
+        )
+
+    try:
+        from deepagents.middleware.converters import get_default_registry
+        from deepagents.middleware.converters.utils import detect_mime_type
+    except ImportError:
+        ext = Path(file_path).suffix.lower()
+        return (
+            f"Error: Converter module not available for '{file_path}' (type: {ext}). "
+            f"Install optional dependencies: pip install deepagents[converters]"
+        )
+
+    mime_type = detect_mime_type(file_path, content=raw_bytes)
+    registry = get_default_registry()
+    converter = registry.get(mime_type)
+    if converter is None:
+        ext = Path(file_path).suffix.lower()
+        return (
+            f"Error: No converter available for '{file_path}' (type: {ext}). "
+            f"Install optional dependencies: pip install deepagents[converters]"
+        )
+
+    def _do_convert() -> str:
+        suffix = Path(file_path).suffix
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix=suffix)
+        try:
+            with os.fdopen(tmp_fd, "wb") as tmp_f:
+                tmp_f.write(raw_bytes)
+            tmp_file_path = Path(tmp_path)
+            if offset > 0 and converter.supports_pagination():
+                total_pages = converter.get_total_pages(tmp_file_path)
+                if total_pages is not None and offset > total_pages:
+                    return f"Error: Page {offset} out of range. Document '{file_path}' has {total_pages} pages."
+                return converter.convert_page(tmp_file_path, page=offset)
+            return converter.convert(tmp_file_path)
+        except ModuleNotFoundError as exc:
+            lib = getattr(exc, "name", "")
+            if lib in {"pdfplumber", "docx", "openpyxl", "pptx"}:
+                return (
+                    f"Error: Converter dependency '{lib}' not installed for '{file_path}'. "
+                    f"Install optional dependencies: pip install deepagents[converters]"
+                )
+            return f"Error converting document '{file_path}': {exc}"
+        except Exception as exc:  # noqa: BLE001 - catch-all for unknown converter errors
+            return f"Error converting document '{file_path}': {exc}"
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    return await asyncio.to_thread(_do_convert)
+
+
 class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]):
     """Middleware for providing filesystem and optional execution tools to an agent.
 
@@ -593,6 +762,14 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
                     return f"Error reading image: {responses[0].error}"
                 return "Error reading image: unknown error"
 
+            if ext in BINARY_DOC_EXTENSIONS:
+                result = _convert_document_sync(resolved_backend, validated_path, offset=offset)
+                if token_limit and len(result) >= NUM_CHARS_PER_TOKEN * token_limit:
+                    truncation_msg = READ_FILE_TRUNCATION_MSG.format(file_path=validated_path)
+                    max_content_length = NUM_CHARS_PER_TOKEN * token_limit - len(truncation_msg)
+                    result = result[:max_content_length] + truncation_msg
+                return result
+
             result = resolved_backend.read(validated_path, offset=offset, limit=limit)
 
             lines = result.splitlines(keepends=True)
@@ -641,6 +818,14 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
                 if responses and responses[0].error:
                     return f"Error reading image: {responses[0].error}"
                 return "Error reading image: unknown error"
+
+            if ext in BINARY_DOC_EXTENSIONS:
+                result = await _convert_document_async(resolved_backend, validated_path, offset=offset)
+                if token_limit and len(result) >= NUM_CHARS_PER_TOKEN * token_limit:
+                    truncation_msg = READ_FILE_TRUNCATION_MSG.format(file_path=validated_path)
+                    max_content_length = NUM_CHARS_PER_TOKEN * token_limit - len(truncation_msg)
+                    result = result[:max_content_length] + truncation_msg
+                return result
 
             result = await resolved_backend.aread(validated_path, offset=offset, limit=limit)
 
