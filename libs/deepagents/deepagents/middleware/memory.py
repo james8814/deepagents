@@ -50,6 +50,7 @@ Common sections include:
 
 from __future__ import annotations
 
+import inspect
 import logging
 from typing import TYPE_CHECKING, Annotated, NotRequired, TypedDict
 
@@ -290,7 +291,16 @@ class MemoryMiddleware(AgentMiddleware[MemoryState, ContextT, ResponseT]):
         backend = self._get_backend(state, runtime, config)
         contents: dict[str, str] = {}
 
-        results = await backend.adownload_files(list(self.sources))
+        # Some third-party/back-compat backends may implement `adownload_files`
+        # as a synchronous function returning a list rather than an awaitable.
+        # Tolerate both forms here.
+        adownload = getattr(backend, "adownload_files", None)
+        if callable(adownload):
+            maybe_awaitable = adownload(list(self.sources))
+            results = await maybe_awaitable if inspect.isawaitable(maybe_awaitable) else maybe_awaitable
+        else:
+            # Fallback to synchronous implementation
+            results = backend.download_files(list(self.sources))
         for path, response in zip(self.sources, results, strict=True):
             if response.error is not None:
                 if response.error == "file_not_found":
