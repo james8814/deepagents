@@ -64,6 +64,7 @@ test = [
 ]
 
 evals = [
+  "langsmith",
   "langchain-xai",
   "langchain-mistralai",
   "langchain-deepseek",
