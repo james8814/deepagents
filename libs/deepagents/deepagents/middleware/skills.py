@@ -120,6 +120,7 @@ from langgraph.prebuilt import ToolRuntime
 from langgraph.types import Command
 from typing_extensions import TypedDict
 
+from deepagents.backends.protocol import LsResult
 from deepagents.middleware._utils import append_to_system_message
 
 logger = logging.getLogger(__name__)
@@ -493,10 +494,11 @@ def _list_skills(backend: BackendProtocol, source_path: str) -> list[SkillMetada
     base_path = source_path
 
     skills: list[SkillMetadata] = []
-    items = backend.ls_info(base_path)
+    ls_result = backend.ls_info(base_path)
+    items = ls_result.entries if isinstance(ls_result, LsResult) else ls_result
     # Find all skill directories (directories containing SKILL.md)
     skill_dirs = []
-    for item in items:
+    for item in items or []:
         if not item.get("is_dir"):
             continue
         skill_dirs.append(item["path"])
@@ -568,10 +570,11 @@ async def _alist_skills(backend: BackendProtocol, source_path: str) -> list[Skil
     base_path = source_path
 
     skills: list[SkillMetadata] = []
-    items = await backend.als_info(base_path)
+    ls_result = await backend.als_info(base_path)
+    items = ls_result.entries if isinstance(ls_result, LsResult) else ls_result
     # Find all skill directories (directories containing SKILL.md)
     skill_dirs = []
-    for item in items:
+    for item in items or []:
         if not item.get("is_dir"):
             continue
         skill_dirs.append(item["path"])
