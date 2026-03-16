@@ -2,7 +2,7 @@
 
 This module tests the core file operations implemented in BaseSandbox:
 - write(): Create new files
-- read(): Read file contents with line numbers
+- read(): Read file contents
 - edit(): String replacement in files
 - ls_info(): List directory contents
 - grep_raw(): Search for patterns
@@ -184,12 +184,12 @@ class TestSandboxOperations:
 
         result = sandbox.read(test_path)
 
-        assert "Error:" not in result
-        # Should have line numbers
-        assert "1\t" in result or "     1\t" in result
-        assert "Line 1" in result
-        assert "Line 2" in result
-        assert "Line 3" in result
+        assert result.error is None
+        assert result.file_data is not None
+        content = result.file_data["content"]
+        assert "Line 1" in content
+        assert "Line 2" in content
+        assert "Line 3" in content
 
     def test_read_nonexistent_file(self, sandbox: SandboxBackendProtocol) -> None:
         """Test reading a file that doesn't exist."""
@@ -197,8 +197,8 @@ class TestSandboxOperations:
 
         result = sandbox.read(test_path)
 
-        assert "Error:" in result
-        assert "not found" in result.lower()
+        assert result.error is not None
+        assert "not found" in result.error.lower()
 
     def test_read_empty_file(self, sandbox: SandboxBackendProtocol) -> None:
         """Test reading an empty file."""
@@ -208,7 +208,10 @@ class TestSandboxOperations:
         result = sandbox.read(test_path)
 
         # Empty files should return a system reminder
-        assert "empty" in result.lower() or result.strip() == ""
+        assert result.error is None
+        assert result.file_data is not None
+        content = result.file_data["content"]
+        assert "empty" in content.lower()
 
     def test_read_with_offset(self, sandbox: SandboxBackendProtocol) -> None:
         """Test reading a file with offset parameter."""
@@ -219,8 +222,11 @@ class TestSandboxOperations:
         result = sandbox.read(test_path, offset=5)
 
         # Should start from line 6 (offset=5 means skip first 5 lines)
-        assert "Row_6_content" in result
-        assert "Row_1_content" not in result
+        assert result.error is None
+        assert result.file_data is not None
+        content = result.file_data["content"]
+        assert "Row_6_content" in content
+        assert "Row_1_content" not in content
 
     def test_read_with_limit(self, sandbox: SandboxBackendProtocol) -> None:
         """Test reading a file with limit parameter."""
@@ -231,9 +237,12 @@ class TestSandboxOperations:
         result = sandbox.read(test_path, offset=0, limit=5)
 
         # Should only have first 5 lines
-        assert "Row_1_content" in result
-        assert "Row_5_content" in result
-        assert "Row_6_content" not in result
+        assert result.error is None
+        assert result.file_data is not None
+        content = result.file_data["content"]
+        assert "Row_1_content" in content
+        assert "Row_5_content" in content
+        assert "Row_6_content" not in content
 
     def test_read_with_offset_and_limit(self, sandbox: SandboxBackendProtocol) -> None:
         """Test reading a file with both offset and limit."""
@@ -244,10 +253,13 @@ class TestSandboxOperations:
         result = sandbox.read(test_path, offset=10, limit=5)
 
         # Should have lines 11-15
-        assert "Row_11_content" in result
-        assert "Row_15_content" in result
-        assert "Row_10_content" not in result
-        assert "Row_16_content" not in result
+        assert result.error is None
+        assert result.file_data is not None
+        content = result.file_data["content"]
+        assert "Row_11_content" in content
+        assert "Row_15_content" in content
+        assert "Row_10_content" not in content
+        assert "Row_16_content" not in content
 
     def test_read_unicode_content(self, sandbox: SandboxBackendProtocol) -> None:
         """Test reading a file with unicode content."""
@@ -257,10 +269,12 @@ class TestSandboxOperations:
 
         result = sandbox.read(test_path)
 
-        assert "Error:" not in result
-        assert "👋" in result
-        assert "世界" in result
-        assert "Привет" in result
+        assert result.error is None
+        assert result.file_data is not None
+        content = result.file_data["content"]
+        assert "👋" in content
+        assert "世界" in content
+        assert "Привет" in content
 
     def test_read_file_with_very_long_lines(
         self, sandbox: SandboxBackendProtocol
@@ -275,8 +289,10 @@ class TestSandboxOperations:
         result = sandbox.read(test_path)
 
         # Should still read successfully (implementation may truncate)
-        assert "Error:" not in result
-        assert "Short line" in result
+        assert result.error is None
+        assert result.file_data is not None
+        content = result.file_data["content"]
+        assert "Short line" in content
 
     def test_read_with_zero_limit(self, sandbox: SandboxBackendProtocol) -> None:
         """Test reading with limit=0 returns nothing."""
@@ -287,7 +303,12 @@ class TestSandboxOperations:
         result = sandbox.read(test_path, offset=0, limit=0)
 
         # Should return empty or no content lines
-        assert "Line 1" not in result or result.strip() == ""
+        if result.error is not None:
+            pass  # An error is acceptable for limit=0
+        else:
+            assert result.file_data is not None
+            content = result.file_data["content"]
+            assert "Line 1" not in content or content.strip() == ""
 
     def test_read_offset_beyond_file_length(
         self, sandbox: SandboxBackendProtocol
@@ -299,11 +320,15 @@ class TestSandboxOperations:
 
         result = sandbox.read(test_path, offset=100, limit=10)
 
-        # Should return empty result (no lines to read)
-        # Check that there's no actual content (only possible header/formatting)
-        assert "Line 1" not in result
-        assert "Line 2" not in result
-        assert "Line 3" not in result
+        # Should return empty result or error (no lines to read)
+        if result.error is not None:
+            pass  # An error is acceptable when offset exceeds file length
+        else:
+            assert result.file_data is not None
+            content = result.file_data["content"]
+            assert "Line 1" not in content
+            assert "Line 2" not in content
+            assert "Line 3" not in content
 
     def test_read_offset_at_exact_file_length(
         self, sandbox: SandboxBackendProtocol
@@ -316,8 +341,13 @@ class TestSandboxOperations:
         result = sandbox.read(test_path, offset=5, limit=10)
 
         # Should return empty (offset=5 means skip first 5 lines)
-        assert "Line 1" not in result
-        assert "Line 5" not in result
+        if result.error is not None:
+            pass  # An error is acceptable when offset is at exact file length
+        else:
+            assert result.file_data is not None
+            content = result.file_data["content"]
+            assert "Line 1" not in content
+            assert "Line 5" not in content
 
     def test_read_very_large_file_in_chunks(
         self, sandbox: SandboxBackendProtocol
@@ -330,20 +360,29 @@ class TestSandboxOperations:
 
         # Read first chunk
         chunk1 = sandbox.read(test_path, offset=0, limit=100)
-        assert "Line_0000_content" in chunk1
-        assert "Line_0099_content" in chunk1
-        assert "Line_0100_content" not in chunk1
+        assert chunk1.error is None
+        assert chunk1.file_data is not None
+        content1 = chunk1.file_data["content"]
+        assert "Line_0000_content" in content1
+        assert "Line_0099_content" in content1
+        assert "Line_0100_content" not in content1
 
         # Read middle chunk
         chunk2 = sandbox.read(test_path, offset=500, limit=100)
-        assert "Line_0500_content" in chunk2
-        assert "Line_0599_content" in chunk2
-        assert "Line_0499_content" not in chunk2
+        assert chunk2.error is None
+        assert chunk2.file_data is not None
+        content2 = chunk2.file_data["content"]
+        assert "Line_0500_content" in content2
+        assert "Line_0599_content" in content2
+        assert "Line_0499_content" not in content2
 
         # Read last chunk
         chunk3 = sandbox.read(test_path, offset=900, limit=100)
-        assert "Line_0900_content" in chunk3
-        assert "Line_0999_content" in chunk3
+        assert chunk3.error is None
+        assert chunk3.file_data is not None
+        content3 = chunk3.file_data["content"]
+        assert "Line_0900_content" in content3
+        assert "Line_0999_content" in content3
 
     # ==================== edit() tests ====================
 
@@ -358,7 +397,10 @@ class TestSandboxOperations:
         assert result.error is None
         assert result.occurrences == 1
         # Verify change
-        file_content = sandbox.read(test_path)
+        read_result = sandbox.read(test_path)
+        assert read_result.error is None
+        assert read_result.file_data is not None
+        file_content = read_result.file_data["content"]
         assert "Farewell world" in file_content
         assert "Goodbye" not in file_content
 
@@ -375,7 +417,10 @@ class TestSandboxOperations:
         assert result.error is not None
         assert "multiple times" in result.error.lower()
         # Verify file unchanged
-        file_content = sandbox.read(test_path)
+        read_result = sandbox.read(test_path)
+        assert read_result.error is None
+        assert read_result.file_data is not None
+        file_content = read_result.file_data["content"]
         assert "apple" in file_content
         assert "pear" not in file_content
 
@@ -392,7 +437,10 @@ class TestSandboxOperations:
         assert result.error is None
         assert result.occurrences == 3
         # Verify all replaced
-        file_content = sandbox.read(test_path)
+        read_result = sandbox.read(test_path)
+        assert read_result.error is None
+        assert read_result.file_data is not None
+        file_content = read_result.file_data["content"]
         assert "apple" not in file_content
         assert file_content.count("pear") == 3
 
@@ -431,7 +479,10 @@ class TestSandboxOperations:
         assert result.error is None
 
         # Verify changes
-        file_content = sandbox.read(test_path)
+        read_result = sandbox.read(test_path)
+        assert read_result.error is None
+        assert read_result.file_data is not None
+        file_content = read_result.file_data["content"]
         assert "$200.00" in file_content
         assert "[0-9]+" in file_content
 
@@ -447,7 +498,10 @@ class TestSandboxOperations:
         assert result.error is None
         assert result.occurrences == 1
         # Verify the replacement worked correctly
-        file_content = sandbox.read(test_path)
+        read_result = sandbox.read(test_path)
+        assert read_result.error is None
+        assert read_result.file_data is not None
+        file_content = read_result.file_data["content"]
         assert "Combined" in file_content
         assert "Line 3" in file_content
         assert "Line 1" not in file_content
@@ -462,7 +516,10 @@ class TestSandboxOperations:
 
         assert result.error is None
         assert result.occurrences == 1
-        file_content = sandbox.read(test_path)
+        read_result = sandbox.read(test_path)
+        assert read_result.error is None
+        assert read_result.file_data is not None
+        file_content = read_result.file_data["content"]
         assert "Keep this" in file_content
         assert "Keep this too" in file_content
         assert "Delete this part" not in file_content
@@ -478,7 +535,10 @@ class TestSandboxOperations:
         # Should succeed with 1 occurrence
         assert result.error is None
         assert result.occurrences == 1
-        file_content = sandbox.read(test_path)
+        read_result = sandbox.read(test_path)
+        assert read_result.error is None
+        assert read_result.file_data is not None
+        file_content = read_result.file_data["content"]
         assert "Same text" in file_content
 
     def test_edit_unicode_content(self, sandbox: SandboxBackendProtocol) -> None:
@@ -491,7 +551,10 @@ class TestSandboxOperations:
 
         assert result.error is None
         assert result.occurrences == 1
-        file_content = sandbox.read(test_path)
+        read_result = sandbox.read(test_path)
+        assert read_result.error is None
+        assert read_result.file_data is not None
+        file_content = read_result.file_data["content"]
         assert "🌍" in file_content
         assert "👋" not in file_content
 
@@ -507,7 +570,10 @@ class TestSandboxOperations:
 
         assert result.error is None
         assert result.occurrences == 1
-        file_content = sandbox.read(test_path)
+        read_result = sandbox.read(test_path)
+        assert read_result.error is None
+        assert read_result.file_data is not None
+        file_content = read_result.file_data["content"]
         assert "Line1 Line2" in file_content
 
     def test_edit_with_very_long_strings(self, sandbox: SandboxBackendProtocol) -> None:
@@ -522,7 +588,10 @@ class TestSandboxOperations:
 
         assert result.error is None
         assert result.occurrences == 1
-        file_content = sandbox.read(test_path)
+        read_result = sandbox.read(test_path)
+        assert read_result.error is None
+        assert read_result.file_data is not None
+        file_content = read_result.file_data["content"]
         assert "y" * 100 in file_content  # Check partial presence
         assert "x" * 100 not in file_content
 
@@ -537,7 +606,10 @@ class TestSandboxOperations:
         result = sandbox.edit(test_path, "Line 2", "Modified Line 2")
 
         assert result.error is None
-        file_content = sandbox.read(test_path)
+        read_result = sandbox.read(test_path)
+        assert read_result.error is None
+        assert read_result.file_data is not None
+        file_content = read_result.file_data["content"]
         assert "Line 1" in file_content
         assert "Modified Line 2" in file_content
         assert "Line 3" in file_content
@@ -552,7 +624,10 @@ class TestSandboxOperations:
 
         assert result.error is None
         assert result.occurrences == 1
-        file_content = sandbox.read(test_path)
+        read_result = sandbox.read(test_path)
+        assert read_result.error is None
+        assert read_result.file_data is not None
+        file_content = read_result.file_data["content"]
         assert "red cat" in file_content
         assert "The quick red cat jumps" in file_content
 
@@ -1038,7 +1113,10 @@ class TestSandboxOperations:
         assert write_result.error is None
 
         # Read it back
-        content = sandbox.read(test_path)
+        read_result = sandbox.read(test_path)
+        assert read_result.error is None
+        assert read_result.file_data is not None
+        content = read_result.file_data["content"]
         assert "Original content" in content
 
         # Edit it
@@ -1046,7 +1124,10 @@ class TestSandboxOperations:
         assert edit_result.error is None
 
         # Read again to verify
-        updated_content = sandbox.read(test_path)
+        updated_read = sandbox.read(test_path)
+        assert updated_read.error is None
+        assert updated_read.file_data is not None
+        updated_content = updated_read.file_data["content"]
         assert "Modified content" in updated_content
         assert "Original" not in updated_content
 
