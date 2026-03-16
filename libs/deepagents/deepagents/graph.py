@@ -85,7 +85,7 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
     *,
     system_prompt: str | SystemMessage | None = None,
     middleware: Sequence[AgentMiddleware] = (),
-    subagents: list[SubAgent | CompiledSubAgent] | None = None,
+    subagents: Sequence[SubAgent | CompiledSubAgent] | None = None,
     skills: list[str] | None = None,
     skills_expose_dynamic_tools: bool = False,
     memory: list[str] | None = None,
