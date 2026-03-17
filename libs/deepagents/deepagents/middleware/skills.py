@@ -166,7 +166,7 @@ def _discover_resources(
     resources: list[ResourceMetadata] = []
 
     try:
-        ls_result = backend.ls_info(skill_dir)
+        ls_result = backend.ls(skill_dir)
         items = ls_result.entries if isinstance(ls_result, LsResult) else ls_result
     except Exception:  # noqa: BLE001
         logger.warning("Failed to list resources for skill '%s' at %s", skill_name, skill_dir)
@@ -181,7 +181,7 @@ def _discover_resources(
             if resource_type is None:
                 continue
             try:
-                sub_ls = backend.ls_info(item_path)
+                sub_ls = backend.ls(item_path)
                 sub_items = sub_ls.entries if isinstance(sub_ls, LsResult) else sub_ls
             except Exception:  # noqa: BLE001
                 logger.warning("Failed to list resources in %s", item_path)
@@ -202,7 +202,7 @@ async def _adiscover_resources(
     resources: list[ResourceMetadata] = []
 
     try:
-        ls_result = await backend.als_info(skill_dir)
+        ls_result = await backend.als(skill_dir)
         items = ls_result.entries if isinstance(ls_result, LsResult) else ls_result
     except Exception:  # noqa: BLE001
         logger.warning("Failed to list resources for skill '%s' at %s", skill_name, skill_dir)
@@ -217,7 +217,7 @@ async def _adiscover_resources(
             if resource_type is None:
                 continue
             try:
-                sub_ls = await backend.als_info(item_path)
+                sub_ls = await backend.als(item_path)
                 sub_items = sub_ls.entries if isinstance(sub_ls, LsResult) else sub_ls
             except Exception:  # noqa: BLE001
                 logger.warning("Failed to list resources in %s", item_path)
@@ -498,7 +498,7 @@ def _list_skills(backend: BackendProtocol, source_path: str) -> list[SkillMetada
     base_path = source_path
 
     skills: list[SkillMetadata] = []
-    ls_result = backend.ls_info(base_path)
+    ls_result = backend.ls(base_path)
     items = ls_result.entries if isinstance(ls_result, LsResult) else ls_result
     # Find all skill directories (directories containing SKILL.md)
     skill_dirs = []
@@ -574,7 +574,7 @@ async def _alist_skills(backend: BackendProtocol, source_path: str) -> list[Skil
     base_path = source_path
 
     skills: list[SkillMetadata] = []
-    ls_result = await backend.als_info(base_path)
+    ls_result = await backend.als(base_path)
     items = ls_result.entries if isinstance(ls_result, LsResult) else ls_result
     # Find all skill directories (directories containing SKILL.md)
     skill_dirs = []
