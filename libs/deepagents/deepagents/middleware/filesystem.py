@@ -822,26 +822,9 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
             except ValueError as e:
                 return f"Error: {e}"
 
-            # Local enhancement: handle images and binary documents via Converter system
+            # Local enhancement: binary document conversion (PDF/DOCX/XLSX/PPTX)
+            # Images are handled by upstream's _handle_read_result via ReadResult
             ext = Path(validated_path).suffix.lower()
-            if ext in IMAGE_EXTENSIONS:
-                responses = resolved_backend.download_files([validated_path])
-                if responses and responses[0].content is not None:
-                    media_type = IMAGE_MEDIA_TYPES.get(ext, "image/png")
-                    image_b64 = base64.standard_b64encode(responses[0].content).decode("utf-8")
-                    return ToolMessage(
-                        content_blocks=[create_image_block(base64=image_b64, mime_type=media_type)],
-                        name="read_file",
-                        tool_call_id=runtime.tool_call_id,
-                        additional_kwargs={
-                            "read_file_path": validated_path,
-                            "read_file_media_type": media_type,
-                        },
-                    )
-                if responses and responses[0].error:
-                    return f"Error reading image: {responses[0].error}"
-                return "Error reading image: unknown error"
-
             if ext in BINARY_DOC_EXTENSIONS:
                 result = _convert_document_sync(resolved_backend, validated_path, offset=offset)
                 if token_limit and len(result) >= NUM_CHARS_PER_TOKEN * token_limit:
@@ -850,7 +833,6 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
                     result = result[:max_content_length] + truncation_msg
                 return result
 
-            # Upstream: use new read_result type with _handle_read_result
             read_result = resolved_backend.read(validated_path, offset=offset, limit=limit)
             return _handle_read_result(read_result, validated_path, runtime.tool_call_id, offset, limit)
 
@@ -867,26 +849,8 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
             except ValueError as e:
                 return f"Error: {e}"
 
-            # Local enhancement: handle images and binary documents via Converter system
+            # Local enhancement: binary document conversion (PDF/DOCX/XLSX/PPTX)
             ext = Path(validated_path).suffix.lower()
-            if ext in IMAGE_EXTENSIONS:
-                responses = await resolved_backend.adownload_files([validated_path])
-                if responses and responses[0].content is not None:
-                    media_type = IMAGE_MEDIA_TYPES.get(ext, "image/png")
-                    image_b64 = base64.standard_b64encode(responses[0].content).decode("utf-8")
-                    return ToolMessage(
-                        content_blocks=[create_image_block(base64=image_b64, mime_type=media_type)],
-                        name="read_file",
-                        tool_call_id=runtime.tool_call_id,
-                        additional_kwargs={
-                            "read_file_path": validated_path,
-                            "read_file_media_type": media_type,
-                        },
-                    )
-                if responses and responses[0].error:
-                    return f"Error reading image: {responses[0].error}"
-                return "Error reading image: unknown error"
-
             if ext in BINARY_DOC_EXTENSIONS:
                 result = await _convert_document_async(resolved_backend, validated_path, offset=offset)
                 if token_limit and len(result) >= NUM_CHARS_PER_TOKEN * token_limit:
@@ -895,7 +859,6 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
                     result = result[:max_content_length] + truncation_msg
                 return result
 
-            # Upstream: use new read_result type with _handle_read_result
             read_result = await resolved_backend.aread(validated_path, offset=offset, limit=limit)
             return _handle_read_result(read_result, validated_path, runtime.tool_call_id, offset, limit)
 

@@ -166,12 +166,13 @@ def _discover_resources(
     resources: list[ResourceMetadata] = []
 
     try:
-        items = backend.ls_info(skill_dir)
+        ls_result = backend.ls_info(skill_dir)
+        items = ls_result.entries if isinstance(ls_result, LsResult) else ls_result
     except Exception:  # noqa: BLE001
         logger.warning("Failed to list resources for skill '%s' at %s", skill_name, skill_dir)
         return resources
 
-    for item in items:
+    for item in items or []:
         item_path = item["path"]
         item_name = PurePosixPath(item_path).name
 
@@ -180,11 +181,12 @@ def _discover_resources(
             if resource_type is None:
                 continue
             try:
-                sub_items = backend.ls_info(item_path)
+                sub_ls = backend.ls_info(item_path)
+                sub_items = sub_ls.entries if isinstance(sub_ls, LsResult) else sub_ls
             except Exception:  # noqa: BLE001
                 logger.warning("Failed to list resources in %s", item_path)
                 continue
-            resources.extend({"path": si["path"], "type": resource_type, "skill_name": skill_name} for si in sub_items if not si.get("is_dir"))
+            resources.extend({"path": si["path"], "type": resource_type, "skill_name": skill_name} for si in (sub_items or []) if not si.get("is_dir"))
         elif item_name != "SKILL.md":
             resources.append({"path": item_path, "type": "other", "skill_name": skill_name})
 
@@ -200,12 +202,13 @@ async def _adiscover_resources(
     resources: list[ResourceMetadata] = []
 
     try:
-        items = await backend.als_info(skill_dir)
+        ls_result = await backend.als_info(skill_dir)
+        items = ls_result.entries if isinstance(ls_result, LsResult) else ls_result
     except Exception:  # noqa: BLE001
         logger.warning("Failed to list resources for skill '%s' at %s", skill_name, skill_dir)
         return resources
 
-    for item in items:
+    for item in items or []:
         item_path = item["path"]
         item_name = PurePosixPath(item_path).name
 
@@ -214,11 +217,12 @@ async def _adiscover_resources(
             if resource_type is None:
                 continue
             try:
-                sub_items = await backend.als_info(item_path)
+                sub_ls = await backend.als_info(item_path)
+                sub_items = sub_ls.entries if isinstance(sub_ls, LsResult) else sub_ls
             except Exception:  # noqa: BLE001
                 logger.warning("Failed to list resources in %s", item_path)
                 continue
-            resources.extend({"path": si["path"], "type": resource_type, "skill_name": skill_name} for si in sub_items if not si.get("is_dir"))
+            resources.extend({"path": si["path"], "type": resource_type, "skill_name": skill_name} for si in (sub_items or []) if not si.get("is_dir"))
         elif item_name != "SKILL.md":
             resources.append({"path": item_path, "type": "other", "skill_name": skill_name})
 
