@@ -90,6 +90,7 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
     skills_expose_dynamic_tools: bool = False,
     memory: list[str] | None = None,
     response_format: ResponseFormat | None = None,
+    state_schema: type[Any] | None = None,
     context_schema: type[Any] | None = None,
     checkpointer: Checkpointer | None = None,
     store: BaseStore | None = None,
@@ -166,6 +167,11 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
 
             Memory is loaded at agent startup and added into the system prompt.
         response_format: A structured output response format to use for the agent.
+        state_schema: Optional custom state schema for the agent graph.
+
+            Pass a `TypedDict` subclass to extend the default agent state with additional
+            fields. When `None` (default), the standard agent state schema is used.
+            Passed through to `create_agent`.
         context_schema: The schema of the deep agent.
         checkpointer: Optional `Checkpointer` for persisting agent state between runs.
         store: Optional store for persistent storage (required if backend uses `StoreBackend`).
@@ -321,6 +327,7 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
         tools=tools,
         middleware=deepagent_middleware,
         response_format=response_format,
+        state_schema=state_schema,
         context_schema=context_schema,
         checkpointer=checkpointer,
         store=store,

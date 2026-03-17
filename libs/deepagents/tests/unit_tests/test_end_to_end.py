@@ -1204,3 +1204,16 @@ class TestDeepAgentStructure:
         assert_all_deepagent_qualities(agent)
         assert "sample_tool" in agent.nodes["tools"].bound._tools_by_name
         assert "sample_input" in agent.stream_channels
+
+    def test_deep_agent_with_custom_state_schema(self) -> None:
+        """Verifies that a custom state_schema is passed through to the underlying agent."""
+        from typing import Annotated  # noqa: PLC0415
+
+        from langgraph.graph import MessagesState  # noqa: PLC0415
+
+        class CustomState(MessagesState):
+            custom_field: Annotated[str, "A custom field"] = ""
+
+        agent = create_deep_agent(state_schema=CustomState)
+        assert_all_deepagent_qualities(agent)
+        assert "custom_field" in agent.stream_channels
