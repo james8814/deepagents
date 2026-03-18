@@ -70,7 +70,7 @@ from langchain_core.exceptions import ContextOverflowError
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage, ToolMessage, get_buffer_string
 from langchain_core.messages.utils import count_tokens_approximately
 from langgraph.config import get_config
-from langgraph.types import Command
+from langgraph.types import Command, Overwrite
 from typing_extensions import TypedDict
 
 from deepagents.middleware._utils import append_to_system_message
@@ -493,6 +493,9 @@ A condensed summary follows:
         Returns:
             The effective message list the model would see.
         """
+        if isinstance(messages, Overwrite):
+            messages = messages.value
+
         if event is None:
             return list(messages)
 
