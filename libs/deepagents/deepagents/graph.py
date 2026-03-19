@@ -138,10 +138,10 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
             prompt.
 
             If a string, it's concatenated with the base prompt.
-        middleware: Additional middleware to apply after the standard middleware stack
+        middleware: Additional middleware to apply after the base stack
             (`TodoListMiddleware`, `FilesystemMiddleware`, `SubAgentMiddleware`,
-            `SummarizationMiddleware`, `AnthropicPromptCachingMiddleware`,
-            `PatchToolCallsMiddleware`).
+            `SummarizationMiddleware`, `PatchToolCallsMiddleware`) but before
+            `AnthropicPromptCachingMiddleware` and `MemoryMiddleware`.
         subagents: Optional subagent specs available to the main agent.
 
             This collection supports three forms:
@@ -218,7 +218,6 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
         TodoListMiddleware(),
         FilesystemMiddleware(backend=backend),
         create_summarization_middleware(model, backend),
-        AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
         PatchToolCallsMiddleware(),
     ]
     if skills is not None:
@@ -229,6 +228,7 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
                 expose_dynamic_tools=skills_expose_dynamic_tools,
             )
         )
+    gp_middleware.append(AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"))
     if interrupt_on is not None:
         gp_middleware.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
 
@@ -260,7 +260,6 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
                 TodoListMiddleware(),
                 FilesystemMiddleware(backend=backend),
                 create_summarization_middleware(subagent_model, backend),
-                AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
                 PatchToolCallsMiddleware(),
             ]
             subagent_skills = spec.get("skills")
@@ -279,6 +278,7 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
                         )
                     )
             subagent_middleware.extend(user_spec_middleware)
+            subagent_middleware.append(AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"))
 
             processed_spec: SubAgent = {  # ty: ignore[missing-typed-dict-key]
                 **spec,
@@ -298,8 +298,6 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
     deepagent_middleware: list[AgentMiddleware[Any, Any, Any]] = [
         TodoListMiddleware(),
     ]
-    if memory is not None:
-        deepagent_middleware.append(MemoryMiddleware(backend=backend, sources=memory))
     if skills is not None:
         # Skip injection if user already provided a SkillsMiddleware in top-level middleware
         skip_main_skills = any(isinstance(m, SkillsMiddleware) for m in middleware)
@@ -319,7 +317,6 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
                 subagents=inline_subagents,
             ),
             create_summarization_middleware(model, backend),
-            AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
             PatchToolCallsMiddleware(),
         ]
     )
@@ -331,6 +328,11 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
 
     if middleware:
         deepagent_middleware.extend(middleware)
+    # Caching + memory after all other middleware so memory updates don't
+    # invalidate the Anthropic prompt cache prefix.
+    deepagent_middleware.append(AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"))
+    if memory is not None:
+        deepagent_middleware.append(MemoryMiddleware(backend=backend, sources=memory))
     if interrupt_on is not None:
         deepagent_middleware.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
 
