@@ -24,6 +24,7 @@ Version: 5.0.0
 from __future__ import annotations
 
 import base64
+import contextlib
 import logging
 import os
 import secrets
@@ -33,47 +34,38 @@ import threading
 import weakref
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import cache
+from importlib import import_module
 from pathlib import Path
+from types import ModuleType
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from deepagents.backends.protocol import BackendProtocol, FileOperationError
 
-# Deferred imports to avoid circular dependencies
-# These are imported at module level but loaded on first use
-_imported_backends = None
-_imported_protocol = None
-_imported_utils = None
+
+@cache
+def _get_backends() -> ModuleType:
+    return import_module("deepagents.backends")
 
 
-def _get_backends():
-    global _imported_backends
-    if _imported_backends is None:
-        from deepagents import backends
-
-        _imported_backends = backends
-    return _imported_backends
+@cache
+def _get_protocol() -> ModuleType:
+    return import_module("deepagents.backends.protocol")
 
 
-def _get_protocol():
-    global _imported_protocol
-    if _imported_protocol is None:
-        from deepagents.backends import protocol
-
-        _imported_protocol = protocol
-    return _imported_protocol
-
-
-def _get_utils():
-    global _imported_utils
-    if _imported_utils is None:
-        from deepagents.backends import utils
-
-        _imported_utils = utils
-    return _imported_utils
+@cache
+def _get_utils() -> ModuleType:
+    return import_module("deepagents.backends.utils")
 
 
 logger = logging.getLogger(__name__)
+
+_ASCII_MAX = 0x7F
+_NON_ASCII_RATIO_THRESHOLD = 0.3
+_DEFAULT_UPLOAD_MAX_SIZE = 1024 * 1024
+_BACKEND_FACTORY_REQUIRES_RUNTIME_MESSAGE = "Backend factory requires runtime parameter. Pass runtime= when calling upload_files()."
+_STATEBACKEND_REQUIRES_RUNTIME_MESSAGE = "StateBackend upload requires runtime parameter"
 
 
 @dataclass
@@ -112,12 +104,11 @@ class _StateUploadLock:
         _lock_creation_lock: Lock for thread-safe lock creation.
     """
 
-    def __init__(self):
-        # P0-2 Fix: Use WeakKeyDictionary to prevent memory leaks
+    def __init__(self) -> None:
         self._locks: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
         self._lock_creation_lock = threading.Lock()
 
-    def get_lock(self, runtime: Any) -> threading.Lock:
+    def get_lock(self, runtime: object) -> threading.Lock:
         """Get or create a lock for the specific runtime.
 
         Args:
@@ -141,8 +132,8 @@ _state_lock_manager = _StateUploadLock()
 
 
 def _resolve_backend(
-    backend_or_factory: BackendProtocol | Callable[[Any], BackendProtocol],
-    runtime: Any | None = None,
+    backend_or_factory: BackendProtocol | Callable[[object], BackendProtocol],
+    runtime: object | None = None,
 ) -> BackendProtocol:
     """Resolve backend from factory function or return as-is.
 
@@ -169,8 +160,8 @@ def _resolve_backend(
     # If it's callable (factory function), call it with runtime
     if callable(backend_or_factory):
         if runtime is None:
-            raise RuntimeError("Backend factory requires runtime parameter. Pass runtime= when calling upload_files().")
-        backend_factory = cast("Callable[[Any], BackendProtocol]", backend_or_factory)
+            raise RuntimeError(_BACKEND_FACTORY_REQUIRES_RUNTIME_MESSAGE)
+        backend_factory = cast("Callable[[object], BackendProtocol]", backend_or_factory)
         return backend_factory(runtime)
 
     return cast("BackendProtocol", backend_or_factory)
@@ -216,7 +207,7 @@ def _select_strategy(backend: BackendProtocol) -> str:
 def _upload_direct(
     backend: BackendProtocol,
     files: list[tuple[str, bytes]],
-    runtime: Any | None = None,
+    runtime: object | None = None,
 ) -> list[UploadResult]:
     """Upload files using backend.upload_files().
 
@@ -228,14 +219,16 @@ def _upload_direct(
     Returns:
         List of UploadResult objects.
     """
+    logger.debug("Direct upload for backend=%s runtime=%s", type(backend).__name__, runtime is not None)
+
     protocol = _get_protocol()
-    FileUploadResponse = protocol.FileUploadResponse
+    file_upload_response_cls = protocol.FileUploadResponse
 
     # Check for existing files before upload (for overwrite detection)
     existing_sizes: dict[str, int | None] = {}
     try:
         download_responses = backend.download_files([path for path, _ in files])
-        for path, response in zip([p for p, _ in files], download_responses):
+        for path, response in zip([p for p, _ in files], download_responses, strict=True):
             if response.error is None and response.content is not None:
                 existing_sizes[path] = len(response.content)
             else:
@@ -252,9 +245,9 @@ def _upload_direct(
     responses = backend.upload_files(files)
     results: list[UploadResult] = []
 
-    for (path, content), response in zip(files, responses):
+    for (path, _content), response in zip(files, responses, strict=True):
         # Handle both dataclass and dict responses
-        if isinstance(response, FileUploadResponse):
+        if isinstance(response, file_upload_response_cls):
             error = response.error
             success = error is None
         else:
@@ -283,7 +276,7 @@ def _upload_direct(
 def _upload_to_state(
     backend: BackendProtocol,
     files: list[tuple[str, bytes]],
-    runtime: Any | None = None,
+    runtime: object | None = None,
 ) -> list[UploadResult]:
     """Upload files to StateBackend using write() method.
 
@@ -299,7 +292,7 @@ def _upload_to_state(
         RuntimeError: If runtime is not provided.
     """
     if runtime is None:
-        raise RuntimeError("StateBackend upload requires runtime parameter")
+        raise RuntimeError(_STATEBACKEND_REQUIRES_RUNTIME_MESSAGE)
 
     # Get lock for this runtime (P0-2 Fix: WeakKeyDictionary)
     lock = _state_lock_manager.get_lock(runtime)
@@ -311,7 +304,7 @@ def _upload_to_state(
 def _upload_to_state_locked(
     backend: BackendProtocol,
     files: list[tuple[str, bytes]],
-    runtime: Any,
+    runtime: object,
 ) -> list[UploadResult]:
     """Internal state upload with lock held.
 
@@ -323,10 +316,11 @@ def _upload_to_state_locked(
     Returns:
         List of UploadResult objects.
     """
+    logger.debug("State upload locked for backend=%s runtime=%s", type(backend).__name__, runtime is not None)
     utils = _get_utils()
     create_file_data = utils.create_file_data
 
-    max_file_size = int(os.environ.get("DEEPAGENTS_UPLOAD_MAX_SIZE", 1024 * 1024))
+    max_file_size = int(os.environ.get("DEEPAGENTS_UPLOAD_MAX_SIZE", str(_DEFAULT_UPLOAD_MAX_SIZE)))
     results: list[UploadResult] = []
 
     for path, content in files:
@@ -399,19 +393,14 @@ def _upload_single_to_state(
         is_overwrite = False
         previous_size = None
 
-        try:
-            # Use download_files to check existence and get content
+        with contextlib.suppress(Exception):
             download_responses = backend.download_files([path])
-            if download_responses and len(download_responses) > 0:
+            if download_responses:
                 response = download_responses[0]
                 if response.error is None and response.content is not None:
                     is_overwrite = True
-                    # P1 Fix: Calculate size in bytes, not characters
                     previous_size = len(response.content)
                     logger.warning("Overwriting existing file: %s", path)
-        except Exception:
-            # File doesn't exist or other error, continue
-            pass
 
         # Use backend.write() - proper encapsulation
         write_result = backend.write(path, file_content)
@@ -437,7 +426,7 @@ def _upload_single_to_state(
         )
 
     except Exception as e:
-        logger.exception("State write failed for %s: %s", path, e)
+        logger.exception("State write failed for %s", path)
         return UploadResult(
             path=path,
             success=False,
@@ -465,26 +454,28 @@ def _is_text_content(content: bytes, sample_size: int = 8192) -> bool:
 
     # Sample for high ratio of non-ASCII bytes
     sample = content[: min(len(content), sample_size)]
-    non_ascii = sum(1 for b in sample if b > 127)
-    if len(sample) > 0 and non_ascii / len(sample) > 0.3:
+    non_ascii = sum(1 for b in sample if b > _ASCII_MAX)
+    if sample and non_ascii / len(sample) > _NON_ASCII_RATIO_THRESHOLD:
         try:
             content.decode("utf-8")
-            return True
         except UnicodeDecodeError:
             return False
+        else:
+            return True
 
     # Final UTF-8 validation
     try:
         content.decode("utf-8")
-        return True
     except UnicodeDecodeError:
         return False
+    else:
+        return True
 
 
 def _upload_fallback(
     backend: BackendProtocol,
     files: list[tuple[str, bytes]],
-    runtime: Any | None = None,
+    runtime: object | None = None,
 ) -> list[UploadResult]:
     """Fallback upload using FilesystemBackend with secure temporary directory.
 
@@ -504,8 +495,10 @@ def _upload_fallback(
     Returns:
         List of UploadResult objects.
     """
+    logger.debug("Fallback upload for backend=%s runtime=%s", type(backend).__name__, runtime is not None)
+
     backends = _get_backends()
-    FilesystemBackend = backends.FilesystemBackend
+    filesystem_backend_cls = backends.FilesystemBackend
 
     # Create secure private temporary directory
     # Using mkdtemp with random suffix for unpredictability
@@ -513,11 +506,10 @@ def _upload_fallback(
     root_dir = Path(root_dir_str)
 
     try:
-        # Set directory permissions to owner-only (0o700)
-        os.chmod(root_dir, 0o700)
+        root_dir.chmod(0o700)
 
         # Use FilesystemBackend with virtual_mode=True for security
-        fallback_backend = FilesystemBackend(root_dir=str(root_dir), virtual_mode=True)
+        fallback_backend = filesystem_backend_cls(root_dir=str(root_dir), virtual_mode=True)
 
         # Track existing files before upload for overwrite detection
         existing_sizes: dict[str, int | None] = {}
@@ -535,15 +527,13 @@ def _upload_fallback(
         responses = fallback_backend.upload_files(files)
         results: list[UploadResult] = []
 
-        for (path, content), response in zip(files, responses):
+        for (path, _content), response in zip(files, responses, strict=True):
             physical_path = root_dir / path.lstrip("/")
 
             # Set file permissions to owner-only (0o600)
             if physical_path.exists():
-                try:
-                    os.chmod(physical_path, 0o600)
-                except OSError:
-                    pass  # Ignore permission errors
+                with contextlib.suppress(OSError):
+                    physical_path.chmod(0o600)
 
             # Check if this was an overwrite based on pre-upload state
             previous_size = existing_sizes.get(path)
@@ -562,18 +552,16 @@ def _upload_fallback(
             )
     finally:
         # Clean up temporary directory
-        try:
+        with contextlib.suppress(OSError):
             shutil.rmtree(root_dir, ignore_errors=True)
-        except Exception:
-            pass  # Ignore cleanup errors
 
     return results
 
 
 def upload_files(
-    backend_or_factory: BackendProtocol | Callable[[Any], BackendProtocol],
+    backend_or_factory: BackendProtocol | Callable[[object], BackendProtocol],
     files: list[tuple[str, bytes]],
-    runtime: Any | None = None,
+    runtime: object | None = None,
 ) -> list[UploadResult]:
     """Universal upload function that works with ANY backend.
 
