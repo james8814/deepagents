@@ -2,12 +2,11 @@
 # ruff: noqa: E501
 
 import asyncio
-import base64
 import concurrent.futures
 import inspect
+import mimetypes
 import os
 import tempfile
-import mimetypes
 import warnings
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -68,12 +67,17 @@ IMAGE_MEDIA_TYPES = {
     ".webp": "image/webp",
 }
 
-BINARY_DOC_EXTENSIONS = frozenset({
-    ".pdf",
-    ".docx", ".doc",
-    ".xlsx", ".xls",
-    ".pptx", ".ppt",
-})
+BINARY_DOC_EXTENSIONS = frozenset(
+    {
+        ".pdf",
+        ".docx",
+        ".doc",
+        ".xlsx",
+        ".xls",
+        ".pptx",
+        ".ppt",
+    }
+)
 
 
 # Template for truncation message in read_file
@@ -452,10 +456,7 @@ def _convert_document_sync(backend: BackendProtocol, file_path: str, offset: int
     converter = registry.get(mime_type)
     if converter is None:
         ext = Path(file_path).suffix.lower()
-        return (
-            f"Error: No converter available for '{file_path}' (type: {ext}). "
-            f"Install optional dependencies: pip install deepagents[converters]"
-        )
+        return f"Error: No converter available for '{file_path}' (type: {ext}). Install optional dependencies: pip install deepagents[converters]"
 
     suffix = Path(file_path).suffix
     tmp_fd, tmp_path = tempfile.mkstemp(suffix=suffix)
@@ -531,10 +532,7 @@ async def _convert_document_async(backend: BackendProtocol, file_path: str, offs
     converter = registry.get(mime_type)
     if converter is None:
         ext = Path(file_path).suffix.lower()
-        return (
-            f"Error: No converter available for '{file_path}' (type: {ext}). "
-            f"Install optional dependencies: pip install deepagents[converters]"
-        )
+        return f"Error: No converter available for '{file_path}' (type: {ext}). Install optional dependencies: pip install deepagents[converters]"
 
     def _do_convert() -> str:
         suffix = Path(file_path).suffix
