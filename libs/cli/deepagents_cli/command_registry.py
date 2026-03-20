@@ -142,6 +142,12 @@ COMMANDS: tuple[SlashCommand, ...] = (
         hidden_keywords="upgrade",
     ),
     SlashCommand(
+        name="/upload",
+        description="Upload a file",
+        bypass_tier=BypassTier.QUEUED,
+        aliases=("/uploads/",),
+    ),
+    SlashCommand(
         name="/version",
         description="Show version",
         bypass_tier=BypassTier.CONNECTING,
