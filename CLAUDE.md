@@ -73,7 +73,9 @@ make coverage
 
 **Main entry point**: `create_deep_agent()` in `graph.py`
 
-**Default model**: `claude-sonnet-4-5-20250929` (20k tokens)
+**SDK version**: 0.5.0 / **CLI version**: 0.0.34
+
+**Default model**: `claude-sonnet-4-6`
 
 **Middleware Stack** (execution order in `create_deep_agent`):
 1. `TodoListMiddleware` - `write_todos` / `read_todos`
@@ -84,8 +86,9 @@ make coverage
 6. `SummarizationMiddleware` - Auto-summarization at 85% context or 100k tokens
 7. `AnthropicPromptCachingMiddleware` - Prompt caching
 8. `PatchToolCallsMiddleware` - Fixes dangling tool calls
-9. `HumanInTheLoopMiddleware` (optional) - Tool approval before execution
+9. `AsyncSubAgentMiddleware` (optional) - Remote LangGraph server async sub-agents
 10. User-provided middleware (appended)
+11. `HumanInTheLoopMiddleware` (optional) - Tool approval before execution
 
 **File Uploads**: Files uploaded via CLI `/upload <path>` command are stored in `/uploads/`. The upload system includes:
 - **Security validation**: File type detection using magic bytes (via `puremagic`), 100MB size limit, unauthorized type blocking
@@ -107,6 +110,8 @@ make coverage
 
 **Backends** (pluggable storage/execution):
 - `BackendProtocol` - Base protocol: `ls_info`, `read`, `write`, `edit`, `grep_raw`, `glob_info`
+  - Return types (v0.5.0): `LsResult`, `ReadResult`, `WriteResult`, `EditResult`, `GrepResult`, `GlobResult` (dataclasses with `error` field + result field)
+  - Legacy backends returning plain `list`/`str` still work via deprecation shim
 - `SandboxBackendProtocol` - Extends with `execute()` and `id` property
 - `StateBackend` - In-memory via LangGraph state (default, ephemeral)
 - `FilesystemBackend` - Local disk storage
@@ -147,6 +152,23 @@ _EXCLUDED_STATE_KEYS = {"messages", "todos", "structured_response", "skills_meta
 2. `SubAgentMiddleware` filters state, injects `HumanMessage(description)`
 3. Sub-agent runs independently with its own middleware
 4. Final message extracted as `ToolMessage` returned to parent
+
+### Async Sub-Agent Mechanism (`async_subagents.py`) — v0.5.0
+
+**Purpose**: Connect to remote LangGraph servers for asynchronous sub-agent execution.
+
+**Tools provided** (5):
+- `launch_async_subagent` — Create remote thread + run, returns job_id immediately
+- `check_async_subagent` — Query job status and result
+- `update_async_subagent` — Send follow-up instructions
+- `cancel_async_subagent` — Terminate running job
+- `list_async_subagent_jobs` — List all jobs and their status
+
+**State field**: `async_subagent_jobs` — persists across context compaction.
+
+**Usage**: Pass `async_subagents=[{"name": ..., "description": ..., "graph_id": ...}]` to `create_deep_agent()`.
+
+**Export**: `from deepagents import AsyncSubAgent, AsyncSubAgentJob, AsyncSubAgentMiddleware`
 
 ### Skills System (`skills.py`)
 
