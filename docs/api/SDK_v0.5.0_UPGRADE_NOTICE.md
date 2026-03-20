@@ -19,33 +19,45 @@
 
 ### 1. Backend 返回类型变更（最重要）
 
-如果您的项目实现了自定义 Backend（继承 `BackendProtocol`），或直接调用 Backend 方法（`ls_info`/`read`/`grep_raw`/`glob_info`），请注意：
+如果您的项目实现了自定义 Backend（继承 `BackendProtocol`），或直接调用 Backend 方法，请注意两项变更：
 
-**返回类型已从裸 `list`/`str` 升级为强类型 dataclass。**
+**1) 方法名已重命名：**
 
-| 方法 | 旧返回类型 | 新返回类型 |
-|------|-----------|-----------|
-| `ls_info()` | `list[FileInfo]` | `LsResult(error, entries)` |
-| `read()` | `str` | `ReadResult(error, file_data)` |
-| `grep_raw()` | `list[GrepMatch]` | `GrepResult(error, matches)` |
-| `glob_info()` | `list[FileInfo]` | `GlobResult(error, matches)` |
+| 旧方法名 | 新方法名 |
+|----------|---------|
+| `ls_info()` | **`ls()`** |
+| `grep_raw()` | **`grep()`** |
+| `glob_info()` | **`glob()`** |
+
+**2) 返回类型已从裸 `list`/`str` 升级为强类型 dataclass：**
+
+| 方法 | 返回类型 |
+|------|---------|
+| `ls()` | `LsResult(error, entries)` |
+| `read()` | `ReadResult(error, file_data)` |
+| `grep()` | `GrepResult(error, matches)` |
+| `glob()` | `GlobResult(error, matches)` |
 
 **兼容性说明**：
+- 旧方法名（`ls_info`/`grep_raw`/`glob_info`）仍然可以工作（deprecation shim）
 - 旧返回类型仍然可以工作（内置 deprecation 兼容层）
-- 但会打印 `DeprecationWarning`
-- 建议在下一个开发周期内迁移到新类型
+- 但两者都会打印 `DeprecationWarning`
+- 建议尽早迁移到新方法名 + 新返回类型
 
 **迁移方法**：
 
 ```python
 from deepagents.backends.protocol import LsResult
 
-# 兼容新旧两种返回类型的写法
-result = backend.ls_info("/path")
+# 旧代码
+items = backend.ls_info("/path")
+
+# 新代码 (方法名 + 返回类型)
+result = backend.ls("/path")
 if isinstance(result, LsResult):
     items = result.entries or []
 else:
-    items = result  # 旧类型，直接是 list
+    items = result  # 旧类型兼容
 ```
 
 ### 2. 图片读取行为变更
@@ -60,13 +72,18 @@ else:
 
 ### 3. 新增异步子代理功能
 
-新增 `AsyncSubAgentMiddleware`，支持连接远程 LangGraph 服务器：
+新增 `AsyncSubAgentMiddleware`，支持连接远程 LangGraph 服务器。
+
+> **重要**：`async_subagents` 参数已合并到统一的 `subagents` 参数中。通过 `graph_id` 字段自动区分同步/异步子代理。
 
 ```python
 from deepagents import create_deep_agent
 
 agent = create_deep_agent(
-    async_subagents=[
+    subagents=[
+        # 同步子代理
+        {"name": "helper", "description": "Help with tasks", "system_prompt": "You help."},
+        # 异步子代理 (通过 graph_id 识别)
         {
             "name": "researcher",
             "description": "Research agent on remote server",
@@ -121,9 +138,11 @@ from deepagents import AsyncSubAgent, AsyncSubAgentJob, AsyncSubAgentMiddleware
 
 - [ ] `pip install -e libs/deepagents` 或 `uv sync` 成功
 - [ ] `python -c "from deepagents import create_deep_agent; print('OK')"` 通过
-- [ ] 如有自定义 Backend：检查 `ls_info`/`read` 返回类型是否产生 deprecation warning
+- [ ] 如有自定义 Backend：将 `ls_info`→`ls`、`grep_raw`→`grep`、`glob_info`→`glob` 方法名更新
+- [ ] 如有自定义 Backend：检查返回类型是否产生 deprecation warning
+- [ ] 如使用 `async_subagents=` 参数：改为 `subagents=`（在 spec 中加 `graph_id` 字段）
 - [ ] 运行项目测试套件确认无回归
-- [ ] 如使用 `langchain-core`/`langchain`：确认版本满足 >=1.2.19 / >=1.2.12
+- [ ] 如使用 `langchain-anthropic`：确认版本满足 >=1.4.0（已提升）
 
 ---
 

@@ -109,9 +109,9 @@ make coverage
 - Tests: `tests/unit_tests/middleware/converters/test_converter_integration.py` (23 tests)
 
 **Backends** (pluggable storage/execution):
-- `BackendProtocol` - Base protocol: `ls_info`, `read`, `write`, `edit`, `grep_raw`, `glob_info`
-  - Return types (v0.5.0): `LsResult`, `ReadResult`, `WriteResult`, `EditResult`, `GrepResult`, `GlobResult` (dataclasses with `error` field + result field)
-  - Legacy backends returning plain `list`/`str` still work via deprecation shim
+- `BackendProtocol` - Base protocol: `ls`, `read`, `write`, `edit`, `grep`, `glob` (renamed from `ls_info`/`grep_raw`/`glob_info` in v0.5.0)
+  - Return types: `LsResult`, `ReadResult`, `WriteResult`, `EditResult`, `GrepResult`, `GlobResult` (dataclasses with `error` field + result field)
+  - Old method names (`ls_info`, `grep_raw`, `glob_info`) still work via deprecation shim
 - `SandboxBackendProtocol` - Extends with `execute()` and `id` property
 - `StateBackend` - In-memory via LangGraph state (default, ephemeral)
 - `FilesystemBackend` - Local disk storage
@@ -166,7 +166,13 @@ _EXCLUDED_STATE_KEYS = {"messages", "todos", "structured_response", "skills_meta
 
 **State field**: `async_subagent_jobs` — persists across context compaction.
 
-**Usage**: Pass `async_subagents=[{"name": ..., "description": ..., "graph_id": ...}]` to `create_deep_agent()`.
+**Usage**: Pass async subagent specs in the unified `subagents` parameter (identified by `graph_id` field):
+```python
+create_deep_agent(subagents=[
+    {"name": "sync-agent", "description": "...", "system_prompt": "..."},       # SubAgent
+    {"name": "remote-agent", "description": "...", "graph_id": "my-graph"},     # AsyncSubAgent
+])
+```
 
 **Export**: `from deepagents import AsyncSubAgent, AsyncSubAgentJob, AsyncSubAgentMiddleware`
 
