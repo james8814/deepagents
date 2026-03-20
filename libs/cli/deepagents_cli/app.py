@@ -2201,7 +2201,7 @@ class DeepAgentsApp(App):
             help_body = (
                 "Commands: /quit, /clear, /offload, /editor, /mcp, "
                 "/model [--model-params JSON] [--default], /reload, "
-                "/remember, /tokens, /threads, /trace, /update, "
+                "/remember, /tokens, /threads, /trace, /update, /upload, "
                 "/changelog, /docs, /feedback, /help\n\n"
                 "Interactive Features:\n"
                 "  Enter           Submit your message\n"
