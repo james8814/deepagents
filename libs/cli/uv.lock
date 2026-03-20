@@ -951,8 +951,14 @@ requires-dist = [
     { name = "langchain-anthropic", specifier = ">=1.3.5,<2.0.0" },
     { name = "langchain-core", specifier = ">=1.2.19,<2.0.0" },
     { name = "langchain-google-genai", specifier = ">=4.2.0,<5.0.0" },
+    { name = "openpyxl", marker = "extra == 'converters'", specifier = ">=3.1.0" },
+    { name = "pdfplumber", marker = "extra == 'converters'", specifier = ">=0.10.0" },
+    { name = "puremagic", marker = "extra == 'converters'", specifier = ">=1.20" },
+    { name = "python-docx", marker = "extra == 'converters'", specifier = ">=1.0.0" },
+    { name = "python-pptx", marker = "extra == 'converters'", specifier = ">=0.6.23" },
     { name = "wcmatch" },
 ]
+provides-extras = ["converters"]
 
 [package.metadata.requires-dev]
 evals = [
