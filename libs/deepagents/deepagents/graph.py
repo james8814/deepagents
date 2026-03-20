@@ -212,17 +212,13 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
         PatchToolCallsMiddleware(),
     ]
     if skills is not None:
-        # Optional enhancement: if user already provides a SkillsMiddleware in top-level
-        # middleware list, skip default injection to avoid duplicates.
-        skip_main_skills = any(isinstance(m, SkillsMiddleware) for m in middleware)
-        if not skip_main_skills:
-            gp_middleware.append(
-                SkillsMiddleware(
-                    backend=backend,
-                    sources=skills,
-                    expose_dynamic_tools=skills_expose_dynamic_tools,
-                )
+        gp_middleware.append(
+            SkillsMiddleware(
+                backend=backend,
+                sources=skills,
+                expose_dynamic_tools=skills_expose_dynamic_tools,
             )
+        )
     if interrupt_on is not None:
         gp_middleware.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
 

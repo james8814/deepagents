@@ -153,8 +153,9 @@ def _resolve_backend(
         hasattr(backend_or_factory, "upload_files") and hasattr(backend_or_factory, "read") and hasattr(backend_or_factory, "write")
     )
 
-    # If it's already a backend instance, return it
-    if has_protocol_methods and not callable(backend_or_factory):
+    # If it's already a backend instance, return it (takes priority over callable check,
+    # since a backend that also implements __call__ should be used as-is, not as a factory)
+    if has_protocol_methods:
         return cast("BackendProtocol", backend_or_factory)
 
     # If it's callable (factory function), call it with runtime
