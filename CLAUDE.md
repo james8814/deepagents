@@ -79,15 +79,15 @@ make coverage
 
 **Middleware Stack** (execution order in `create_deep_agent`):
 1. `TodoListMiddleware` - `write_todos` / `read_todos`
-2. `MemoryMiddleware` (optional) - Loads `AGENTS.md` into system prompt
-3. `SkillsMiddleware` (optional) - Loads `SKILL.md` metadata (progressive disclosure)
-4. `FilesystemMiddleware` - File ops: `read_file`, `write_file`, `edit_file`, `ls`, `glob`, `grep`, `execute`
-5. `SubAgentMiddleware` - `task` tool for spawning sub-agents
-6. `SummarizationMiddleware` - Auto-summarization at 85% context or 100k tokens
-7. `AnthropicPromptCachingMiddleware` - Prompt caching
-8. `PatchToolCallsMiddleware` - Fixes dangling tool calls
-9. `AsyncSubAgentMiddleware` (optional) - Remote LangGraph server async sub-agents
-10. User-provided middleware (appended)
+2. `SkillsMiddleware` (optional) - Loads `SKILL.md` metadata (progressive disclosure)
+3. `FilesystemMiddleware` - File ops: `read_file`, `write_file`, `edit_file`, `ls`, `glob`, `grep`, `execute`
+4. `SubAgentMiddleware` - `task` tool for spawning sub-agents
+5. `SummarizationMiddleware` - Auto-summarization at 85% context or 100k tokens
+6. `PatchToolCallsMiddleware` - Fixes dangling tool calls
+7. `AsyncSubAgentMiddleware` (optional) - Remote LangGraph server async sub-agents
+8. User-provided middleware (appended)
+9. `AnthropicPromptCachingMiddleware` - Prompt caching (after user middleware to preserve cache prefix)
+10. `MemoryMiddleware` (optional) - Loads `AGENTS.md` into system prompt (last to avoid cache invalidation)
 11. `HumanInTheLoopMiddleware` (optional) - Tool approval before execution
 
 **File Uploads**: Files uploaded via CLI `/upload <path>` command are stored in `/uploads/`. The upload system includes:
