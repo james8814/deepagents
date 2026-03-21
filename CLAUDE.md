@@ -158,13 +158,13 @@ _EXCLUDED_STATE_KEYS = {"messages", "todos", "structured_response", "skills_meta
 **Purpose**: Connect to remote LangGraph servers for asynchronous sub-agent execution.
 
 **Tools provided** (5):
-- `launch_async_subagent` — Create remote thread + run, returns job_id immediately
-- `check_async_subagent` — Query job status and result
-- `update_async_subagent` — Send follow-up instructions
-- `cancel_async_subagent` — Terminate running job
-- `list_async_subagent_jobs` — List all jobs and their status
+- `start_async_task` — Create remote thread + run, returns task_id immediately
+- `check_async_task` — Query task status and result
+- `update_async_task` — Send follow-up instructions
+- `cancel_async_task` — Terminate running task
+- `list_async_tasks` — List all tasks and their status
 
-**State field**: `async_subagent_jobs` — persists across context compaction.
+**State field**: `async_subagent_tasks` — persists across context compaction. Each task tracks `task_id`, `agent_name`, `status`, `created_at`, `updated_at`.
 
 **Usage**: Pass async subagent specs in the unified `subagents` parameter (identified by `graph_id` field):
 ```python
@@ -174,7 +174,7 @@ create_deep_agent(subagents=[
 ])
 ```
 
-**Export**: `from deepagents import AsyncSubAgent, AsyncSubAgentJob, AsyncSubAgentMiddleware`
+**Export**: `from deepagents import AsyncSubAgent, AsyncSubAgentMiddleware`
 
 ### Skills System (`skills.py`)
 

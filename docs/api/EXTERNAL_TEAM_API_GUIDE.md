@@ -512,12 +512,14 @@ agent = create_deep_agent(
 )
 ```
 
-提供 5 个工具：`launch_async_subagent`、`check_async_subagent`、`update_async_subagent`、`cancel_async_subagent`、`list_async_subagent_jobs`。
+提供 5 个工具：`start_async_task`、`check_async_task`、`update_async_task`、`cancel_async_task`、`list_async_tasks`。
+
+> **注意**：工具名已从 `*_async_subagent*` 重命名为 `*_async_task*`。`AsyncSubAgentJob` 已重命名为内部类 `AsyncTask`，不再公共导出。
 
 ### 新增公共 API 导出
 
 ```python
-from deepagents import AsyncSubAgent, AsyncSubAgentJob, AsyncSubAgentMiddleware
+from deepagents import AsyncSubAgent, AsyncSubAgentMiddleware
 ```
 
 ### Default Model 变更

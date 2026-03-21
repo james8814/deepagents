@@ -96,10 +96,10 @@ agent = create_deep_agent(
 
 **新增公共导出**：
 ```python
-from deepagents import AsyncSubAgent, AsyncSubAgentJob, AsyncSubAgentMiddleware
+from deepagents import AsyncSubAgent, AsyncSubAgentMiddleware
 ```
 
-这是新增功能，不影响现有代码。
+> **注意**：`AsyncSubAgentJob` 已重命名为内部类 `AsyncTask`，不再公共导出。工具名也已从 `*_async_subagent*` 更新为 `*_async_task*`（如 `start_async_task`、`check_async_task`）。
 
 ### 4. 默认模型变更
 
