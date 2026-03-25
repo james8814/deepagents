@@ -271,6 +271,55 @@ class MediaTracker:
         return max_id + 1 if max_id else fallback_count + 1
 
 
+class ImageTracker:
+    """Backward-compatible image-only tracker wrapper."""
+
+    def __init__(self) -> None:
+        """Initialize the image tracker."""
+        self._inner = MediaTracker()
+
+    @property
+    def next_id(self) -> int:
+        """Get the next available image ID."""
+        return self._inner.next_image_id
+
+    @property
+    def images(self) -> list[ImageData]:
+        """Get the list of tracked images."""
+        return self._inner.images
+
+    def add_image(self, image_data: ImageData) -> str:
+        """Add an image to the tracker.
+
+        Args:
+            image_data: The image data to add.
+
+        Returns:
+            The placeholder string for the added image.
+        """
+        return self._inner.add_image(image_data)
+
+    def get_images(self) -> list[ImageData]:
+        """Get all tracked images.
+
+        Returns:
+            A list of all tracked image data.
+        """
+        return self._inner.get_images()
+
+    def clear(self) -> None:
+        """Clear all tracked images."""
+        self._inner.clear()
+
+    def sync_to_text(self, text: str) -> None:
+        """Sync tracked images with text content.
+
+        Args:
+            text: The text content to sync with.
+        """
+        self._inner.sync_to_text(text)
+
+
 def parse_file_mentions(text: str) -> tuple[str, list[Path]]:
     r"""Extract `@file` mentions and return the text with resolved file paths.
 

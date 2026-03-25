@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """ACP server implementation for Deep Agents."""
 
 from __future__ import annotations

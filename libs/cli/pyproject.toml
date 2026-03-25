@@ -178,6 +178,7 @@ ignore = [
     "C90",     # McCabe complexity
     "COM812",  # Messes with the formatter
     "CPY",     # No copyright
+    "EXE002",  # Executable file without shebang (permissions issue on some file systems)
     "FBT",     # Boolean positional arguments (too pedantic)
     "FIX002",  # Line contains TODO
     "ISC001",  # Messes with the formatter

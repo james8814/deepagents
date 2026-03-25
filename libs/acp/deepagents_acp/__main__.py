@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Entry point for running the ACP server as a module."""
 
 import asyncio

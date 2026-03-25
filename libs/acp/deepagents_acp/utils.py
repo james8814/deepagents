@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Utility functions for converting ACP content blocks to LangChain formats."""
 
 from __future__ import annotations

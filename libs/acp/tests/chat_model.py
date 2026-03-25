@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Fake chat models for testing purposes."""
 
 import re

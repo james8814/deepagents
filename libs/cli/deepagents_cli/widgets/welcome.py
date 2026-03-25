@@ -107,12 +107,16 @@ class WelcomeBanner(Static):
         """Fetch the LangSmith URL in a thread and update the banner."""
         if not self._project_name:
             return
+        import inspect
+        from contextlib import suppress
+
+        coro = asyncio.to_thread(fetch_langsmith_project_url, self._project_name)
         try:
-            project_url = await asyncio.wait_for(
-                asyncio.to_thread(fetch_langsmith_project_url, self._project_name),
-                timeout=2.0,
-            )
+            project_url = await asyncio.wait_for(coro, timeout=2.0)
         except (TimeoutError, OSError):
+            if inspect.iscoroutine(coro):
+                with suppress(Exception):
+                    coro.close()
             project_url = None
         if project_url:
             self._project_url = project_url

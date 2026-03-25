@@ -1170,7 +1170,7 @@ class TestPrintUsageTable:
         stats.record_request("gpt-4", 100, 50)
         stats.record_request("claude-opus-4-6", 200, 80)
         buf = StringIO()
-        console = Console(file=buf, force_terminal=True)
+        console = Console(file=buf, force_terminal=True, width=120)  # Set wider width to avoid truncation
         print_usage_table(stats, wall_time=2.0, console=console)
         output = buf.getvalue()
         assert "gpt-4" in output
