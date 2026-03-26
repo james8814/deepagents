@@ -66,3 +66,17 @@ def _isolate_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         "deepagents_cli.widgets.chat_input._default_history_path",
         lambda: tmp_path / "history.jsonl",
     )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_sessions_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Redirect the global sessions DB to a temp file.
+
+    The CLI stores thread state in `~/.deepagents/sessions.db`. In sandboxed
+    test environments, touching the real home directory can fail or be blocked,
+    causing the overall test run to exit non-zero even when all tests pass.
+    """
+    monkeypatch.setattr(
+        "deepagents_cli.sessions.get_db_path",
+        lambda: tmp_path / "sessions.db",
+    )
