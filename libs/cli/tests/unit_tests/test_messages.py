@@ -147,16 +147,17 @@ class TestToolCallMessageMarkupSafety:
         assert msg._args == args
 
     def test_tool_header_escapes_markup_in_label(self) -> None:
-        """Tool header should safely render label content with markup-like chars."""
+        """Task description widget should safely render bracket content."""
         msg = ToolCallMessage(
             "task",
             {"description": "Search for closing tag [/dim] mismatches"},
         )
 
-        # `task` has no inline args widget, so this validates the header markup.
-        header = next(iter(msg.compose()))
-        content = header._Static__content
-        assert isinstance(content, Content)
+        # Header shows subagent type; description is a separate dim widget.
+        widgets = list(msg.compose())
+        # Second widget is the task description line (Static with dim style).
+        # Content.styled() produces a Content object stored on the Static.
+        content = widgets[1]._Static__content  # type: ignore[attr-defined]
         assert "[/dim]" in content.plain
 
     def test_tool_args_line_escapes_markup_values(self) -> None:
