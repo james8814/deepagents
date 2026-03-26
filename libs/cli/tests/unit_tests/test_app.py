@@ -2613,7 +2613,11 @@ class TestBypassFrozensetDrift:
 
     @staticmethod
     def _handled_commands() -> set[str]:
-        """Extract slash-command literals from `_handle_command` source."""
+        """Extract slash-command literals from `_handle_command` source.
+
+        Filters out false positives like filesystem paths (/uploads/) that
+        happen to start with /.
+        """
         import ast
         import inspect
         import textwrap
@@ -2626,6 +2630,12 @@ class TestBypassFrozensetDrift:
             if isinstance(node, ast.Constant) and isinstance(node.value, str):
                 val = node.value.strip()
                 if val.startswith("/") and len(val) > 1:
+                    # Filter out filesystem paths (end with / or contain / after first char)
+                    # and other false positives - only keep actual slash commands
+                    if val.endswith("/") and val != "/":
+                        continue  # Skip filesystem paths like /uploads/
+                    if "/" in val[1:] and not val.startswith("/skill:"):
+                        continue  # Skip paths with / in the middle (except /skill:)
                     handled.add(val)
         return handled
 

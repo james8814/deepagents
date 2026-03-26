@@ -833,6 +833,13 @@ def create_cli_agent(
             sources.append(str(project_skills_dir))
         if project_agent_skills_dir:
             sources.append(str(project_agent_skills_dir))
+        # Claude skills directories (experimental)
+        sources.extend(
+            [
+                str(settings.get_user_claude_skills_dir()),
+                str(settings.get_project_claude_skills_dir()),
+            ]
+        )
 
         agent_middleware.append(
             SkillsMiddleware(

@@ -99,6 +99,10 @@ ignore-var-parameters = true  # ignore missing documentation for *args and **kwa
     "D100",   # py.typed marker file does not need a docstring
     "N999",   # py.typed is a PEP 561 convention, not a normal module name
 ]
+"examples/**" = [
+    "EXE002", # Shebang not required in example files
+    "BLE001", # Broad exception catch acceptable in demo code
+]
 "tests/**" = [
     "ANN001",   # Missing type annotation for function argument — not needed in tests
     "ANN201",   # Missing return type annotation — not needed in tests

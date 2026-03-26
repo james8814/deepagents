@@ -38,4 +38,3 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
 
     if missing:
         pytest.skip(f"Skipping because required dependencies are missing: {', '.join(missing)}")
-

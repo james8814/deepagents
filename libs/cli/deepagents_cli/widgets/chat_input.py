@@ -601,6 +601,13 @@ class ChatTextArea(TextArea):
                 event.stop()
                 self.insert("\n")
                 return
+            # Backslash was not found at the cursor position. This can happen
+            # if the backslash is still being processed when enter arrives.
+            # In this case, don't fall through to submit logic—just insert newline.
+            event.prevent_default()
+            event.stop()
+            self.insert("\n")
+            return
         self._backslash_pending_time = None
 
         if event.key == "backslash" and event.character == "\\":

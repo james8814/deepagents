@@ -9,6 +9,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from deepagents_cli.skills.load import ExtendedSkillMetadata
 
 
 class BypassTier(StrEnum):
@@ -113,10 +117,21 @@ COMMANDS: tuple[SlashCommand, ...] = (
         bypass_tier=BypassTier.QUEUED,
         hidden_keywords="refresh",
     ),
-    SlashCommand(
+    SlashCommand(  # Static alias; not auto-generated from skill discovery
         name="/remember",
         description="Update memory and skills from conversation",
         bypass_tier=BypassTier.QUEUED,
+    ),
+    SlashCommand(  # Static alias; not auto-generated from skill discovery
+        name="/skill-creator",
+        description="Guide for creating effective agent skills",
+        bypass_tier=BypassTier.QUEUED,
+    ),
+    SlashCommand(
+        name="/theme",
+        description="Switch color theme",
+        bypass_tier=BypassTier.IMMEDIATE_UI,
+        hidden_keywords="dark light color appearance",
     ),
     SlashCommand(
         name="/threads",
@@ -143,9 +158,8 @@ COMMANDS: tuple[SlashCommand, ...] = (
     ),
     SlashCommand(
         name="/upload",
-        description="Upload a file",
+        description="Upload a file to the agent's workspace",
         bypass_tier=BypassTier.QUEUED,
-        aliases=("/uploads/",),
     ),
     SlashCommand(
         name="/version",
@@ -153,7 +167,7 @@ COMMANDS: tuple[SlashCommand, ...] = (
         bypass_tier=BypassTier.CONNECTING,
     ),
 )
-"""All slash commands, alphabetically sorted by name."""
+"""All slash commands."""
 
 
 # ---------------------------------------------------------------------------
@@ -211,3 +225,60 @@ SLASH_COMMANDS: list[tuple[str, str, str]] = [
     (cmd.name, cmd.description, cmd.hidden_keywords) for cmd in COMMANDS
 ]
 """`(name, description, hidden_keywords)` tuples for `SlashCommandController`."""
+
+
+def parse_skill_command(command: str) -> tuple[str, str]:
+    """Extract skill name and args from a `/skill:<name>` command.
+
+    Args:
+        command: The full command string (e.g., `/skill:web-research find X`).
+
+    Returns:
+        Tuple of `(skill_name, args)`.
+
+            The skill name is normalized to lowercase. Both are empty strings
+            when the command has no skill name after the prefix.
+    """
+    after_prefix = command[len("/skill:") :].strip()
+    parts = after_prefix.split(maxsplit=1)
+    if not parts or not parts[0]:
+        return "", ""
+    skill_name = parts[0].lower()
+    args = parts[1] if len(parts) > 1 else ""
+    return skill_name, args
+
+
+_STATIC_SKILL_ALIASES: frozenset[str] = frozenset({"remember", "skill-creator"})
+"""Built-in skill names that have a dedicated top-level slash command.
+
+Only list skills whose `/skill:<name>` form is redundant because a `/<name>`
+convenience alias exists in `COMMANDS`.  Do **not** add every command name
+here — that would silently suppress unrelated user skills that happen to share a
+name with a slash command (e.g., a user skill called `model` should still
+appear as `/skill:model`).
+"""
+
+
+def build_skill_commands(
+    skills: list[ExtendedSkillMetadata],
+) -> list[tuple[str, str, str]]:
+    """Build autocomplete tuples for discovered skills.
+
+    Each skill becomes a `/skill:<name>` entry with its description
+    and the skill name as a hidden keyword for fuzzy matching.
+
+    Skills that already have a dedicated slash command in `COMMANDS`
+    (e.g., `remember` → `/remember`) are excluded to avoid duplicate
+    autocomplete entries.
+
+    Args:
+        skills: List of discovered skill metadata.
+
+    Returns:
+        List of `(name, description, hidden_keywords)` tuples.
+    """
+    return [
+        (f"/skill:{skill['name']}", skill["description"], skill["name"])
+        for skill in skills
+        if skill["name"] not in _STATIC_SKILL_ALIASES
+    ]

@@ -94,9 +94,7 @@ class PDFConverter(BaseConverter):
             total_pages = len(pdf.pages)
 
             if page < 1 or page > total_pages:
-                raise ValueError(
-                    f"Page {page} out of range. Document has {total_pages} pages."
-                )
+                raise ValueError(f"Page {page} out of range. Document has {total_pages} pages.")
 
             pdf_page = pdf.pages[page - 1]
             text = pdf_page.extract_text() or ""

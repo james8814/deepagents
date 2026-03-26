@@ -83,7 +83,7 @@ class TextConverter(BaseConverter):
 
         # Check for common code patterns
         code_indicators = 0
-        for line in lines[:min(20, len(lines))]:
+        for line in lines[: min(20, len(lines))]:
             # Skip empty lines
             if not line.strip():
                 continue

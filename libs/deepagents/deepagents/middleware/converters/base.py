@@ -24,6 +24,7 @@ class BaseConverter(ABC):
         class PDFConverter(BaseConverter):
             def convert(self, path: Path, raw_content: str | bytes | None = None) -> str:
                 import pdfplumber
+
                 with pdfplumber.open(path) as pdf:
                     return "\\n\\n".join(page.extract_text() or "" for page in pdf.pages)
         ```
@@ -112,10 +113,7 @@ class BaseConverter(ABC):
 
         # Calculate column widths
         all_rows = [headers] + str_rows
-        col_widths = [
-            max(len(row[i]) if i < len(row) else 0 for row in all_rows)
-            for i in range(len(headers))
-        ]
+        col_widths = [max(len(row[i]) if i < len(row) else 0 for row in all_rows) for i in range(len(headers))]
 
         # Build table
         lines = []
@@ -130,10 +128,7 @@ class BaseConverter(ABC):
 
         # Data rows
         for row in str_rows:
-            cells = [
-                (row[i] if i < len(row) else "").ljust(col_widths[i])
-                for i in range(len(headers))
-            ]
+            cells = [(row[i] if i < len(row) else "").ljust(col_widths[i]) for i in range(len(headers))]
             lines.append("| " + " | ".join(cells) + " |")
 
         return "\n".join(lines)
@@ -150,7 +145,4 @@ class BaseConverter(ABC):
         logger.info(f"Converted {path.name}{page_info} in {duration:.2f}s")
 
         if duration > 5.0:
-            logger.warning(
-                f"Conversion took {duration:.2f}s for {path.name}. "
-                "Consider using pagination for large files."
-            )
+            logger.warning(f"Conversion took {duration:.2f}s for {path.name}. Consider using pagination for large files.")

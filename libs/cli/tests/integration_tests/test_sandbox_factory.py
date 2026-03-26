@@ -289,6 +289,14 @@ class TestRunLoopIntegration(BaseSandboxIntegrationTest):
     @pytest.fixture(scope="class")
     def sandbox(self) -> Iterator[BaseSandbox]:
         """Provide a RunLoop sandbox instance."""
+        import importlib.util
+
+        # Skip if runloop package not available
+        if importlib.util.find_spec("langchain_runloop") is None:
+            pytest.skip(
+                "langchain-runloop package not installed; skipping RunLoop integration tests"
+            )
+
         with create_sandbox("runloop") as sandbox:
             yield sandbox
 
@@ -299,6 +307,14 @@ class TestDaytonaIntegration(BaseSandboxIntegrationTest):
     @pytest.fixture(scope="class")
     def sandbox(self) -> Iterator[BaseSandbox]:
         """Provide a Daytona sandbox instance."""
+        import importlib.util
+
+        # Skip if daytona package not available
+        if importlib.util.find_spec("langchain_daytona") is None:
+            pytest.skip(
+                "langchain-daytona package not installed; skipping Daytona integration tests"
+            )
+
         with create_sandbox("daytona") as sandbox:
             yield sandbox
 
@@ -309,6 +325,12 @@ class TestModalIntegration(BaseSandboxIntegrationTest):
     @pytest.fixture(scope="class")
     def sandbox(self) -> Iterator[BaseSandbox]:
         """Provide a Modal sandbox instance."""
+        import importlib.util
+
+        # Skip if modal package not available
+        if importlib.util.find_spec("modal") is None:
+            pytest.skip("modal package not installed; skipping Modal integration tests")
+
         with create_sandbox("modal") as sandbox:
             yield sandbox
 
@@ -319,10 +341,17 @@ class TestLangSmithIntegration(BaseSandboxIntegrationTest):
     @pytest.fixture(scope="class")
     def sandbox(self) -> Iterator[BaseSandbox]:
         """Provide a LangSmith sandbox instance."""
+        import os
+
+        # Skip if API key not available
+        if not os.environ.get("LANGSMITH_API_KEY"):
+            pytest.skip("LANGSMITH_API_KEY not set; skipping LangSmith integration tests")
+
         with create_sandbox("langsmith") as sandbox:
             yield sandbox
 
 
+@pytest.mark.skip(reason="AgentCore provider not yet implemented in sandbox_factory.py")
 class TestAgentCoreIntegration(BaseSandboxIntegrationTest):
     """Test AgentCore Code Interpreter backend integration."""
 

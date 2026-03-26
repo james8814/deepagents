@@ -385,7 +385,7 @@ class TestLoadThemePreference:
     ) -> None:
         from deepagents_cli.app import _load_theme_preference
 
-        monkeypatch.setattr("deepagents_cli.app.theme.DEFAULT_THEME", "langchain")
+        monkeypatch.setattr("deepagents_cli.theme.DEFAULT_THEME", "langchain")
         missing = tmp_path / "nonexistent" / "config.toml"
         monkeypatch.setattr("deepagents_cli.model_config.DEFAULT_CONFIG_PATH", missing)
         assert _load_theme_preference() == "langchain"

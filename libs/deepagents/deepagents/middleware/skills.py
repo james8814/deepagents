@@ -186,7 +186,9 @@ def _discover_resources(
             except Exception:  # noqa: BLE001
                 logger.warning("Failed to list resources in %s", item_path)
                 continue
-            resources.extend({"path": si["path"], "type": resource_type, "skill_name": skill_name} for si in (sub_items or []) if not si.get("is_dir"))
+            resources.extend(
+                [{"path": si["path"], "type": resource_type, "skill_name": skill_name} for si in (sub_items or []) if not si.get("is_dir")]
+            )
         elif item_name != "SKILL.md":
             resources.append({"path": item_path, "type": "other", "skill_name": skill_name})
 
@@ -222,7 +224,9 @@ async def _adiscover_resources(
             except Exception:  # noqa: BLE001
                 logger.warning("Failed to list resources in %s", item_path)
                 continue
-            resources.extend({"path": si["path"], "type": resource_type, "skill_name": skill_name} for si in (sub_items or []) if not si.get("is_dir"))
+            resources.extend(
+                [{"path": si["path"], "type": resource_type, "skill_name": skill_name} for si in (sub_items or []) if not si.get("is_dir")]
+            )
         elif item_name != "SKILL.md":
             resources.append({"path": item_path, "type": "other", "skill_name": skill_name})
 

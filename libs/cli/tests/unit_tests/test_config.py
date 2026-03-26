@@ -408,7 +408,8 @@ class TestClaudeSkillsDirs:
     def test_get_user_claude_skills_dir(self) -> None:
         """Test get_user_claude_skills_dir returns ~/.claude/skills."""
         expected = Path.home() / ".claude" / "skills"
-        assert Settings.get_user_claude_skills_dir() == expected
+        settings = Settings.from_environment()
+        assert settings.get_user_claude_skills_dir() == expected
 
     def test_get_project_claude_skills_dir_with_project(self, tmp_path: Path) -> None:
         """Test get_project_claude_skills_dir returns .claude/skills in project."""

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Middleware for providing subagents to an agent via a `task` tool."""
 
+import logging
 import os
 import warnings
 from collections.abc import Awaitable, Callable, Sequence
@@ -19,6 +20,8 @@ from langgraph.types import Command
 
 from deepagents.backends.protocol import BackendFactory, BackendProtocol
 from deepagents.middleware._utils import append_to_system_message
+
+logger = logging.getLogger(__name__)
 
 
 class SubAgent(TypedDict):
@@ -136,6 +139,7 @@ _EXCLUDED_STATE_KEYS = {"messages", "todos", "structured_response", "skills_meta
 # Feature flag: enable SubAgent execution logging via environment variable
 # Set DEEPAGENTS_SUBAGENT_LOGGING=1 to capture tool calls and results for display/debugging
 _ENABLE_SUBAGENT_LOGGING = os.getenv("DEEPAGENTS_SUBAGENT_LOGGING", "").strip() == "1"
+logger.info("[subagents] DEEPAGENTS_SUBAGENT_LOGGING=%s", _ENABLE_SUBAGENT_LOGGING)
 
 # Sensitive keys to redact in logs (values replaced with "***")
 _SENSITIVE_KEYS = {
@@ -453,10 +457,19 @@ def _extract_subagent_logs(messages: list) -> list[dict[str, Any]]:
         if isinstance(msg, AIMessage) and msg.tool_calls:
             for call in msg.tool_calls:
                 tool_call_id = call.get("id")
+                # Debug: log all keys in the tool_call object
+                logger.info(
+                    "[subagents] tool_call keys: %s, full call: %s",
+                    list(call.keys()),
+                    call,
+                )
+                # Use multiple fallbacks for tool name extraction
+                tool_name = call.get("name") or call.get("tool_name") or call.get("tool") or "unknown"
+                logger.info("[subagents] tool_name extracted: %s", tool_name)
                 entries.append(
                     {
                         "type": "tool_call",
-                        "tool_name": call.get("name"),
+                        "tool_name": tool_name,
                         "tool_input": _redact_sensitive_fields(call.get("args", {})),
                         "tool_call_id": tool_call_id,
                     }
@@ -465,11 +478,26 @@ def _extract_subagent_logs(messages: list) -> list[dict[str, Any]]:
         elif isinstance(msg, ToolMessage):
             # Truncate long outputs to prevent state bloat
             truncated_output = _truncate_text(msg.content) if isinstance(msg.content, str) else str(msg.content)
+            # Debug: log all attributes of ToolMessage to find the correct attribute for tool_name
+            logger.info(
+                "[subagents] ToolMessage attributes: tool_call_id=%s, content_type=%s, dir=%s",
+                msg.tool_call_id,
+                type(msg.content).__name__,
+                [attr for attr in dir(msg) if not attr.startswith("_")],
+            )
+            # Extract tool_name from the message (LangChain stores it in msg.name)
+            tool_name = getattr(msg, "name", None) or getattr(msg, "tool_name", None) or "unknown"
+            logger.info(
+                "[subagents] tool_result: tool_call_id=%s, tool_name=%s",
+                msg.tool_call_id,
+                tool_name,
+            )
             entries.append(
                 {
                     "type": "tool_result",
                     "tool_call_id": msg.tool_call_id,
                     "tool_output": truncated_output,
+                    "tool_name": tool_name,
                     "status": "success",
                 }
             )
@@ -520,9 +548,22 @@ def _build_task_tool(  # noqa: C901
         # Extract and capture SubAgent execution logs if feature is enabled
         if _ENABLE_SUBAGENT_LOGGING:
             messages = result.get("messages", [])
+            logger.info(
+                "[subagents] _return_command: %d messages in subagent result",
+                len(messages),
+            )
             log_entries = _extract_subagent_logs(messages)
+            logger.info(
+                "[subagents] _extract_subagent_logs returned %d entries",
+                len(log_entries),
+            )
             if log_entries:
                 state_update["subagent_logs"] = {tool_call_id: log_entries}
+                logger.info(
+                    "[subagents] Added %d log entries to state_update for tool_call_id=%s",
+                    len(log_entries),
+                    tool_call_id,
+                )
 
         # Strip trailing whitespace to prevent API errors with Anthropic
         message_text = result["messages"][-1].text.rstrip() if result["messages"][-1].text else ""

@@ -1431,3 +1431,149 @@ class SummarizationMessage(AppMessage):
         else:
             rendered = Content.styled(message, "bold cyan")
         super().__init__(rendered, **kwargs)
+
+
+class SkillMessage(Vertical):
+    """Widget displaying a skill loading/usage notification.
+
+    Shows skill metadata (name, description, source) with optional
+    expandable body content (full skill instructions).
+    """
+
+    DEFAULT_CSS = """
+    SkillMessage {
+        height: auto;
+        padding: 0 1;
+        margin: 1 0 0 0;
+        background: transparent;
+        border-left: wide #8b5cf6;
+    }
+
+    SkillMessage .skill-header {
+        height: auto;
+        margin-bottom: 0;
+    }
+
+    SkillMessage .skill-meta {
+        color: #6b7280;
+        margin-left: 3;
+    }
+
+    SkillMessage .skill-body {
+        margin-left: 3;
+        margin-top: 1;
+    }
+
+    SkillMessage:hover {
+        border-left: wide #a78bfa;
+    }
+    """
+
+    def __init__(
+        self,
+        skill_name: str,
+        description: str = "",
+        source: str = "",
+        body: str = "",
+        args: str = "",
+        **kwargs: Any,
+    ) -> None:
+        """Initialize a skill message.
+
+        Args:
+            skill_name: Name of the skill
+            description: Skill description
+            source: Source of the skill (built-in, user, project)
+            body: Full skill body/instructions (optional, shown when expanded)
+            args: Skill arguments if any
+            **kwargs: Additional arguments passed to parent
+        """
+        super().__init__(**kwargs)
+        self._skill_name = skill_name
+        self._description = description
+        self._source = source
+        self._body = body
+        self._args = args
+        self._expanded: bool = False
+        # Deferred state for hydration (set by MessageData.to_widget)
+        self._deferred_expanded: bool = False
+        # Widget references (set in on_mount)
+        self._header_widget: Static | None = None
+        self._meta_widget: Static | None = None
+        self._body_widget: Static | None = None
+
+    def compose(self) -> ComposeResult:
+        """Compose the skill message layout.
+
+        Yields:
+            Widgets for header, metadata, and optional body display.
+        """
+        yield Static(
+            Content.from_markup(
+                "[bold #8b5cf6]Skill: $name[/bold #8b5cf6]",
+                name=self._skill_name,
+            ),
+            classes="skill-header",
+            id="skill-header",
+        )
+        yield Static(
+            Content.from_markup(
+                "[dim]($desc)[/dim]",
+                desc=self._description or "No description",
+            ),
+            classes="skill-meta",
+            id="skill-meta",
+        )
+        yield Static(
+            Content.from_markup("[dim][source: $source][/dim]", source=self._source),
+            classes="skill-meta",
+            id="skill-source",
+        )
+        yield Static("", classes="skill-body", id="skill-body")
+
+    def on_mount(self) -> None:
+        """Cache widget references and set border style."""
+        if is_ascii_mode():
+            self.styles.border_left = ("ascii", "#8b5cf6")
+
+        self._header_widget = self.query_one("#skill-header", Static)
+        self._meta_widget = self.query_one("#skill-meta", Static)
+        self._body_widget = self.query_one("#skill-body", Static)
+
+        # Hide body initially (collapsed state)
+        self._body_widget.display = False
+
+        # Restore deferred state if this widget was hydrated from data
+        self._restore_deferred_state()
+
+    def _restore_deferred_state(self) -> None:
+        """Restore state from deferred values (used when hydrating from data)."""
+        if not self._deferred_expanded:
+            return
+
+        # Restore expanded state from deferred values
+        self._expanded = self._deferred_expanded
+        self._deferred_expanded = False
+
+        # Show body if expanded and has content
+        if self._expanded and self._body and self._body_widget:
+            self._body_widget.update(Content(self._body))
+            self._body_widget.display = True
+
+    def toggle_body(self) -> None:
+        """Toggle the skill body visibility."""
+        self._expanded = not self._expanded
+        if self._body_widget:
+            if self._expanded and self._body:
+                self._body_widget.update(Content(self._body))
+                self._body_widget.display = True
+            else:
+                self._body_widget.display = False
+
+    def on_click(self, event: Click) -> None:
+        """Toggle body expansion or show timestamp."""
+        event.stop()
+        if self._body:
+            self.toggle_body()
+        else:
+            _show_timestamp_toast(self)

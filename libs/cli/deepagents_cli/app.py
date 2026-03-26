@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
+import tomli
+import tomli_w
 from textual.app import App, ScreenStackError
 from textual.binding import Binding, BindingType
 from textual.containers import Container, VerticalScroll
@@ -365,6 +367,75 @@ _COMMAND_URLS: dict[str, str] = {
 """Slash-command to URL mapping for commands that just open a browser."""
 
 
+def _load_theme_preference() -> str:
+    """Load the user's saved theme preference from config.toml.
+
+    Returns:
+        The saved theme name, or `DEFAULT_THEME` if not found.
+    """
+    from deepagents_cli.model_config import DEFAULT_CONFIG_PATH
+    from deepagents_cli.theme import DEFAULT_THEME, ThemeEntry
+
+    try:
+        if not DEFAULT_CONFIG_PATH.exists():
+            return DEFAULT_THEME
+
+        with DEFAULT_CONFIG_PATH.open("rb") as f:
+            config = tomli.load(f)
+
+        ui_section = config.get("ui", {})
+        theme = ui_section.get("theme")
+
+        if theme is None:
+            return DEFAULT_THEME
+
+        # Validate theme exists in registry
+        if theme not in ThemeEntry.REGISTRY:
+            return DEFAULT_THEME
+    except (tomli.TOMLDecodeError, OSError):
+        return DEFAULT_THEME
+    else:
+        return theme
+
+
+def save_theme_preference(theme_name: str) -> bool:
+    """Save the user's theme preference to config.toml.
+
+    Args:
+        theme_name: The theme name to save.
+
+    Returns:
+        `True` if successfully saved, `False` otherwise.
+    """
+    from deepagents_cli.model_config import DEFAULT_CONFIG_PATH
+    from deepagents_cli.theme import ThemeEntry
+
+    # Validate theme exists
+    if theme_name not in ThemeEntry.REGISTRY:
+        return False
+
+    try:
+        # Read existing config or create new
+        existing: dict[str, Any] = {}
+        if DEFAULT_CONFIG_PATH.exists():
+            with DEFAULT_CONFIG_PATH.open("rb") as f:
+                existing = tomli.load(f)
+
+        # Update theme preference
+        if "ui" not in existing:
+            existing["ui"] = {}
+        existing["ui"]["theme"] = theme_name
+
+        # Write back
+        DEFAULT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with DEFAULT_CONFIG_PATH.open("wb") as f:
+            tomli_w.dump(existing, f)
+    except (OSError, PermissionError):
+        return False
+    else:
+        return True
+
+
 class DeepAgentsApp(App):
     """Main Textual application for deepagents-cli."""
 
@@ -374,6 +445,23 @@ class DeepAgentsApp(App):
 
     # Scroll speed (default is 3 lines per scroll event)
     SCROLL_SENSITIVITY_Y = 1.0
+
+    @classmethod
+    def get_theme_variable_defaults(cls) -> dict[str, str]:
+        """Return default values for custom CSS variables.
+
+        This method is called by Textual to register CSS variables before
+        the stylesheet is parsed. It must be a classmethod to work with
+        Textual's theme system.
+
+        Returns:
+            Dict mapping CSS variable names (without $ prefix) to hex values.
+        """
+        from deepagents_cli.theme import get_css_variable_defaults
+
+        # Return both mode-bash and mode-command variables
+        # Default to dark mode colors (can be overridden by user theme)
+        return get_css_variable_defaults(dark=True)
 
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("escape", "interrupt", "Interrupt", show=False, priority=True),
@@ -2202,7 +2290,7 @@ class DeepAgentsApp(App):
                 "Commands: /quit, /clear, /offload, /editor, /mcp, "
                 "/model [--model-params JSON] [--default], /reload, "
                 "/remember, /tokens, /threads, /trace, /update, /upload, "
-                "/changelog, /docs, /feedback, /help\n\n"
+                "/skill-creator, /theme, /changelog, /docs, /feedback, /help\n\n"
                 "Interactive Features:\n"
                 "  Enter           Submit your message\n"
                 f"  {newline_shortcut():<15} Insert newline\n"
@@ -2247,22 +2335,24 @@ class DeepAgentsApp(App):
             except PackageNotFoundError:
                 logger.debug("deepagents SDK package not found in environment")
                 sdk_line = "deepagents (SDK) version: unknown"
-            except Exception:
+            except Exception:  # Unexpected error handling
                 logger.warning("Unexpected error looking up SDK version", exc_info=True)
                 sdk_line = "deepagents (SDK) version: unknown"
             await self._mount_message(AppMessage(f"{cli_line}\n{sdk_line}"))
         elif cmd.startswith("/upload"):
             # Usage: /upload <path>
             args = command.strip().split(" ", 1)
-            if len(args) < 2:
+            usage_arg_count = 2
+            if len(args) < usage_arg_count:
                 await self._mount_message(UserMessage(command))
                 await self._mount_message(ErrorMessage("Usage: /upload <path>"))
                 return
 
             file_path_str = args[1].strip()
             # Handle quoted paths if user drags & drops
-            if (file_path_str.startswith('"') and file_path_str.endswith('"')) or \
-               (file_path_str.startswith("'") and file_path_str.endswith("'")):
+            if (file_path_str.startswith('"') and file_path_str.endswith('"')) or (
+                file_path_str.startswith("'") and file_path_str.endswith("'")
+            ):
                 file_path_str = file_path_str[1:-1]
 
             await self._mount_message(UserMessage(f"/upload {file_path_str}"))
@@ -2270,7 +2360,11 @@ class DeepAgentsApp(App):
             try:
                 from pathlib import Path
 
-                from deepagents_cli.utils.security import SecurityError, ValidationError, validate_file_type
+                from deepagents_cli.utils.security import (
+                    SecurityError,
+                    ValidationError,
+                    validate_file_type,
+                )
 
                 source_path = Path(file_path_str)
                 # 1. Security & Validation
@@ -2293,7 +2387,9 @@ class DeepAgentsApp(App):
                 # BackendProtocol.upload_files is synchronous, wrap in thread if needed
                 # But we can check if it has aupload_files
                 if hasattr(self._backend, "aupload_files"):
-                    responses = await self._backend.aupload_files([(target_path, content)])
+                    responses = await self._backend.aupload_files(
+                        [(target_path, content)]
+                    )
                 else:
                     responses = await asyncio.to_thread(
                         self._backend.upload_files, [(target_path, content)]
@@ -2301,11 +2397,13 @@ class DeepAgentsApp(App):
 
                 response = responses[0]
                 if response.error:
-                    await self._mount_message(ErrorMessage(f"Upload failed: {response.error}"))
+                    msg = f"Upload failed: {response.error}"
+                    await self._mount_message(ErrorMessage(msg))
                 else:
                     # Success - Provide feedback based on file type
                     file_size = len(content)
-                    status_text = f"✓ {target_filename} uploaded ({file_size / 1024:.1f}KB)"
+                    size_kb = file_size / 1024
+                    status_text = f"✓ {target_filename} uploaded ({size_kb:.1f}KB)"
 
                     # Provide type-specific guidance
                     base_path = f"/uploads/{target_filename}"
@@ -2321,20 +2419,24 @@ class DeepAgentsApp(App):
                             "Note: PDFs cannot be read directly. "
                             "Use `execute` with `pdftotext` or similar tools."
                         )
-                    elif mime_type in ("application/zip", "application/x-tar", "application/gzip"):
+                    elif mime_type in {
+                        "application/zip",
+                        "application/x-tar",
+                        "application/gzip",
+                    }:
                         details = (
                             f"   File available at {base_path}. "
                             "Use `execute` with `unzip`, `tar`, etc. "
                             "to extract and access contents."
                         )
-                    elif mime_type in (
+                    elif mime_type in {
                         "application/msword",
                         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                         "application/vnd.ms-excel",
                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         "application/vnd.ms-powerpoint",
                         "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                    ):
+                    }:
                         details = (
                             f"   File available at {base_path}. "
                             "Note: Office documents cannot be read directly. "
@@ -2351,8 +2453,9 @@ class DeepAgentsApp(App):
 
             except (ValidationError, SecurityError) as e:
                 await self._mount_message(ErrorMessage(str(e)))
-            except Exception as e:
-                await self._mount_message(ErrorMessage(f"Error uploading file: {e}"))
+            except Exception as e:  # noqa: BLE001  # Catch-all for upload errors
+                msg = f"Error uploading file: {e}"
+                await self._mount_message(ErrorMessage(msg))
         elif cmd == "/clear":
             self._pending_messages.clear()
             self._queued_widgets.clear()
@@ -2448,6 +2551,14 @@ class DeepAgentsApp(App):
             return  # _handle_user_message already mounts the message
         elif cmd == "/mcp":
             await self._show_mcp_viewer()
+        elif cmd == "/skill-creator":
+            # Load the skill-creator skill and send its content to the agent
+            await self._mount_message(UserMessage(command))
+            await self._handle_skill_creator()
+        elif cmd == "/theme":
+            # Open theme selector modal screen
+            await self._mount_message(UserMessage(command))
+            await self._show_theme_selector()
         elif cmd == "/model" or cmd.startswith("/model "):
             model_arg = None
             set_default = False
@@ -3866,6 +3977,90 @@ class DeepAgentsApp(App):
                 self._chat_input.focus_input()
 
         self.push_screen(screen, handle_result)
+
+    async def _show_theme_selector(self) -> None:
+        """Show interactive theme selector as a modal screen."""
+        from deepagents_cli.model_config import DEFAULT_CONFIG_PATH
+        from deepagents_cli.theme import DEFAULT_THEME
+        from deepagents_cli.widgets.theme_selector import ThemeSelectorScreen
+
+        # Get current theme from app state
+        current_theme = getattr(self, "theme", DEFAULT_THEME)
+
+        def handle_result(result: str | None) -> None:
+            """Handle the theme selector result."""
+            if result is not None:
+                # Theme already applied via live preview
+                # Save preference to config file
+                try:
+                    import tomli_w
+
+                    config_path = DEFAULT_CONFIG_PATH
+                    config_path.parent.mkdir(parents=True, exist_ok=True)
+
+                    # Read existing config or create new
+                    existing: dict[str, Any] = {}
+                    if config_path.exists():
+                        import tomli
+
+                        with config_path.open("rb") as f:
+                            existing = tomli.load(f)
+
+                    # Update theme preference (unified schema: [ui].theme)
+                    if "ui" not in existing:
+                        existing["ui"] = {}
+                    existing["ui"]["theme"] = result
+
+                    # Write back
+                    with config_path.open("wb") as f:
+                        tomli_w.dump(existing, f)
+                except ImportError:
+                    logger.debug(
+                        "tomli_w not available; could not save theme preference"
+                    )
+                except (OSError, PermissionError) as e:
+                    logger.debug("Could not save theme preference: %s", e)
+            if self._chat_input:
+                self._chat_input.focus_input()
+
+        screen = ThemeSelectorScreen(current_theme=current_theme)
+        self.push_screen(screen, handle_result)
+
+    async def _handle_skill_creator(self) -> None:
+        """Handle the /skill-creator command.
+
+        Loads the built-in skill-creator skill and sends its content
+        to the agent for interactive guidance.
+        """
+        import asyncio
+        from pathlib import Path
+
+        # Get the skill-creator guide content
+        guide_path = (
+            Path(__file__).parent / "built_in_skills" / "skill-creator" / "SKILL.md"
+        )
+
+        if not guide_path.exists():
+            await self._mount_message(AppMessage("Skill creator guide not found."))
+            return
+
+        try:
+            guide_content = await asyncio.to_thread(guide_path.read_text)
+
+            # Send the guide to the agent
+            prompt = (
+                "Please help me create a new skill. Here is the skill-creator "
+                "guide for reference:\n\n"
+                f"{guide_content}"
+            )
+
+            # Send as a user message to the agent
+            await self._handle_user_message(prompt)
+        except (OSError, PermissionError) as e:
+            logger.warning("Failed to read skill-creator guide: %s", e, exc_info=True)
+            await self._mount_message(
+                ErrorMessage(f"Could not load skill-creator guide: {e}")
+            )
 
     async def _show_thread_selector(self) -> None:
         """Show interactive thread selector as a modal screen."""

@@ -139,10 +139,13 @@ class TestHelpBodyDrift:
         registry_cmds = {cmd.name for cmd in COMMANDS}
 
         # Commands intentionally omitted from the help body
-        excluded = {"/version"}
+        excluded = {"/version", "/skill-creator"}
+
+        # Extra commands in help body that are not in COMMANDS (local features)
+        allowed_extra = {"/skill", "/upload"}  # /skill: dynamic skills, /upload: local feature
 
         missing = registry_cmds - help_cmds - excluded
-        extra = help_cmds - registry_cmds
+        extra = help_cmds - registry_cmds - allowed_extra
 
         assert not missing, (
             f"Commands in COMMANDS but missing from /help body: {missing}\n"

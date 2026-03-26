@@ -65,6 +65,8 @@ logger = logging.getLogger(__name__)
 _ASCII_MAX = 0x7F
 _NON_ASCII_RATIO_THRESHOLD = 0.3
 _DEFAULT_UPLOAD_MAX_SIZE = 1024 * 1024
+_MAX_PATH_LENGTH = 1024  # Generous limit for full virtual path (filesystems vary)
+_MAX_COMPONENT_LENGTH = 255  # Standard filesystem limit for path components (e.g., ext4, APFS)
 _BACKEND_FACTORY_REQUIRES_RUNTIME_MESSAGE = "Backend factory requires runtime parameter. Pass runtime= when calling upload_files()."
 _STATEBACKEND_REQUIRES_RUNTIME_MESSAGE = "StateBackend upload requires runtime parameter"
 
@@ -560,6 +562,37 @@ def _upload_fallback(
     return results
 
 
+def _validate_upload_path(path: str) -> str | None:
+    """Validate an upload path for security and filesystem limits.
+
+    Args:
+        path: The virtual path to validate.
+
+    Returns:
+        Error message string if invalid, None if valid.
+    """
+    # Check for null bytes (always invalid)
+    if "\x00" in path:
+        return "invalid_path: null byte in path"
+
+    # Check path length (filesystems typically limit to 255 bytes per component,
+    # but we use a generous limit for the full path)
+    if len(path) > _MAX_PATH_LENGTH:
+        return f"invalid_path: path too long ({len(path)} > {_MAX_PATH_LENGTH})"
+
+    # Check for path traversal attempts
+    # Split path and check each component
+    components = path.split("/")
+    for component in components:
+        if component == "..":
+            return "invalid_path: path traversal not allowed"
+        # Check individual component length (most filesystems limit to 255)
+        if len(component) > _MAX_COMPONENT_LENGTH:
+            return f"invalid_path: path component too long ({len(component)} > {_MAX_COMPONENT_LENGTH})"
+
+    return None
+
+
 def upload_files(
     backend_or_factory: BackendProtocol | Callable[[object], BackendProtocol],
     files: list[tuple[str, bytes]],
@@ -604,18 +637,52 @@ def upload_files(
     # Resolve backend (handle factory functions)
     backend = _resolve_backend(backend_or_factory, runtime)
 
+    # Validate all paths before selecting strategy
+    validation_errors: dict[int, str] = {}
+    valid_files: list[tuple[str, bytes]] = []
+
+    for i, (path, content) in enumerate(files):
+        error = _validate_upload_path(path)
+        if error:
+            validation_errors[i] = error
+        else:
+            valid_files.append((path, content))
+
     # Select strategy based on backend type
     strategy = _select_strategy(backend)
 
-    logger.debug("Uploading %d files using strategy: %s", len(files), strategy)
+    logger.debug("Uploading %d files using strategy: %s", len(valid_files), strategy)
 
-    # Execute upload with selected strategy
-    if strategy == "direct":
-        return _upload_direct(backend, files, runtime)
-    if strategy == "state":
-        return _upload_to_state(backend, files, runtime)
-    # fallback
-    return _upload_fallback(backend, files, runtime)
+    # Execute upload with selected strategy for valid files
+    if valid_files:
+        if strategy == "direct":
+            valid_results = _upload_direct(backend, valid_files, runtime)
+        elif strategy == "state":
+            valid_results = _upload_to_state(backend, valid_files, runtime)
+        else:  # fallback
+            valid_results = _upload_fallback(backend, valid_files, runtime)
+    else:
+        valid_results = []
+
+    # Merge validation errors with upload results, maintaining original order
+    results: list[UploadResult] = []
+    valid_idx = 0
+
+    for i in range(len(files)):
+        if i in validation_errors:
+            results.append(
+                UploadResult(
+                    path=files[i][0],
+                    success=False,
+                    error=validation_errors[i],
+                    strategy=strategy,
+                )
+            )
+        else:
+            results.append(valid_results[valid_idx])
+            valid_idx += 1
+
+    return results
 
 
 # Convenience alias for backward compatibility

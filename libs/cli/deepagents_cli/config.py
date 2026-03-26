@@ -1022,6 +1022,29 @@ class Settings:
         """
         return Path(__file__).parent / "built_in_skills"
 
+    def get_user_claude_skills_dir(self) -> Path:  # noqa: PLR6301  # Instance method for mocking in tests
+        """Get user-level `~/.claude/skills/` directory (experimental).
+
+        This is used for Claude-specific skills, separate from deepagents
+        skills.
+
+        Returns:
+            Path to `~/.claude/skills/`
+        """
+        return Path.home() / ".claude" / "skills"
+
+    def get_project_claude_skills_dir(self) -> Path | None:
+        """Get project-level `.claude/skills/` directory (experimental).
+
+        This is used for Claude-specific skills at the project level.
+
+        Returns:
+            Path to `{project_root}/.claude/skills/`, or `None` if not in a project
+        """
+        if not self.project_root:
+            return None
+        return self.project_root / ".claude" / "skills"
+
 
 class SessionState:
     """Mutable session state shared across the app, adapter, and agent.

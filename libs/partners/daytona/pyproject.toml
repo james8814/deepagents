@@ -96,3 +96,6 @@ filterwarnings = []
 
 [tool.ruff.lint.extend-per-file-ignores]
 "tests/**/*.py" = ["D", "S101"]
+# exFAT volume doesn't preserve Unix permissions - executable bit stuck on
+"**/__init__.py" = ["EXE002"]
+"langchain_daytona/sandbox.py" = ["EXE002"]
