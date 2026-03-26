@@ -289,6 +289,13 @@ _editable_cache: tuple[bool, str | None] | None = None
 _langsmith_url_cache: tuple[str, str] | None = None
 """Module-level cache for successful LangSmith project URL lookups."""
 
+_git_branch_cache: dict[str, str | None] = {}
+"""Cache for git branch name by working directory.
+
+Keys are working directory paths as returned by `str(Path.cwd())`;
+`None` values indicate the directory is not inside a git repository.
+"""
+
 _LANGSMITH_URL_LOOKUP_TIMEOUT_SECONDS = 2.0
 """Max seconds to wait for LangSmith project URL lookup.
 
@@ -1506,7 +1513,7 @@ def _get_default_model_spec() -> str:
     raise ModelConfigError(msg)
 
 
-_OPENROUTER_APP_URL = "https://github.com/langchain-ai/deepagents"
+_OPENROUTER_APP_URL = "https://pypi.org/project/deepagents-cli/"
 """Default `app_url` (maps to `HTTP-Referer`) for OpenRouter attribution.
 
 See https://openrouter.ai/docs/app-attribution for details.
@@ -1514,6 +1521,9 @@ See https://openrouter.ai/docs/app-attribution for details.
 
 _OPENROUTER_APP_TITLE = "Deep Agents CLI"
 """Default `app_title` (maps to `X-Title`) for OpenRouter attribution."""
+
+_OPENROUTER_APP_CATEGORIES: list[str] = ["cli-agent"]
+"""Default `app_categories` (maps to `X-OpenRouter-Categories`) for OpenRouter."""
 
 
 def _apply_openrouter_defaults(kwargs: dict[str, Any]) -> None:
@@ -1543,6 +1553,7 @@ def _apply_openrouter_defaults(kwargs: dict[str, Any]) -> None:
     """
     kwargs.setdefault("app_url", _OPENROUTER_APP_URL)
     kwargs.setdefault("app_title", _OPENROUTER_APP_TITLE)
+    kwargs.setdefault("app_categories", _OPENROUTER_APP_CATEGORIES)
 
 
 def _get_provider_kwargs(
@@ -1577,6 +1588,9 @@ def _get_provider_kwargs(
             result["api_key"] = api_key
 
     if provider == "openrouter":
+        from deepagents._models import check_openrouter_version  # noqa: PLC2701
+
+        check_openrouter_version()
         _apply_openrouter_defaults(result)
 
     return result
@@ -1964,6 +1978,104 @@ def validate_model_capabilities(model: BaseChatModel, model_name: str) -> None:
             f"[dim][yellow]Warning:[/yellow] Model '{model_name}' has limited context "
             f"({max_input_tokens:,} tokens). Agent performance may be affected.[/dim]"
         )
+
+
+def _get_git_branch() -> str | None:
+    """Return the current git branch name, or `None` if not in a repo."""
+    import subprocess  # noqa: S404
+
+    try:
+        cwd = str(Path.cwd())
+    except OSError:
+        logger.debug("Could not determine cwd for git branch lookup", exc_info=True)
+        return None
+    if cwd in _git_branch_cache:
+        return _git_branch_cache[cwd]
+
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        if result.returncode == 0:
+            branch = result.stdout.strip() or None
+            _git_branch_cache[cwd] = branch
+            return branch
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        logger.debug("Could not determine git branch", exc_info=True)
+    _git_branch_cache[cwd] = None
+    return None
+
+
+def build_stream_config(
+    thread_id: str,
+    assistant_id: str | None,
+    *,
+    sandbox_type: str | None = None,
+) -> RunnableConfig:
+    """Build the LangGraph stream config dict.
+
+    Injects CLI and SDK versions into `metadata["versions"]` so LangSmith traces
+    can be correlated with specific releases.
+
+    Why the CLI sets *both* versions:
+
+    * `create_deep_agent` bakes `versions: {"deepagents": "X.Y.Z"}` into the
+        compiled graph via `with_config`. At stream time, LangGraph merges
+        the graph config with the runtime config passed here. Because the
+        metadata merge is shallow (effectively `{**graph_meta, **runtime_meta}`
+        for top-level keys), both configs containing a `versions` key means
+        the runtime dict **replaces** the graph dict entirely — the SDK
+        version would be lost.
+    * Including the SDK version here ensures it survives the merge.
+
+    Args:
+        thread_id: The CLI session thread identifier.
+        assistant_id: The agent/assistant identifier, if any.
+        sandbox_type: Sandbox provider name for trace metadata, or `None` if no
+            sandbox is active.
+
+    Returns:
+        Config dict with `configurable` and `metadata` keys.
+    """
+    import contextlib
+    import importlib.metadata as importlib_metadata
+    from datetime import UTC, datetime
+
+    try:
+        cwd = str(Path.cwd())
+    except OSError:
+        logger.warning("Could not determine working directory", exc_info=True)
+        cwd = ""
+
+    # Include SDK version alongside CLI version — see docstring for why.
+    versions: dict[str, str] = {"deepagents-cli": __version__}
+    with contextlib.suppress(importlib_metadata.PackageNotFoundError):
+        versions["deepagents"] = importlib_metadata.version("deepagents")
+
+    metadata: dict[str, Any] = {"versions": versions}
+    if cwd:
+        metadata["cwd"] = cwd
+    if assistant_id:
+        metadata.update(
+            {
+                "assistant_id": assistant_id,
+                "agent_name": assistant_id,
+                "updated_at": datetime.now(UTC).isoformat(),
+            }
+        )
+    branch = _get_git_branch()
+    if branch:
+        metadata["git_branch"] = branch
+    if sandbox_type and sandbox_type != "none":
+        metadata["sandbox_type"] = sandbox_type
+    return {
+        "configurable": {"thread_id": thread_id},
+        "metadata": metadata,
+    }
 
 
 def _get_console() -> Console:
