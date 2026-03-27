@@ -627,6 +627,9 @@ class Settings:
     # Shell command allow-list for auto-approval
     shell_allow_list: list[str] | None = None
 
+    # Extra skills directories (for symlink containment check)
+    extra_skills_dirs: list[Path] | None = None
+
     @classmethod
     def from_environment(cls, *, start_path: Path | None = None) -> Settings:
         """Create settings by detecting the current environment.
@@ -821,6 +824,17 @@ class Settings:
     def has_tavily(self) -> bool:
         """Check if Tavily API key is configured."""
         return self.tavily_api_key is not None
+
+    def get_extra_skills_dirs(self) -> list[Path]:
+        """Get user-configured extra skill directories.
+
+        Set via `DEEPAGENTS_EXTRA_SKILLS_DIRS` (colon-separated paths) or
+        `[skills].extra_allowed_dirs` in `~/.deepagents/config.toml`.
+
+        Returns:
+            List of extra skill directory paths, or empty list if not configured.
+        """
+        return self.extra_skills_dirs or []
 
     @property
     def user_deepagents_dir(self) -> Path:

@@ -1810,3 +1810,15 @@ class ChatInput(Vertical):
                 self._text_area.move_cursor((row, remaining))
                 break
             remaining -= len(line) + 1
+
+    def update_slash_commands(self, commands: list[tuple[str, str, str]]) -> None:
+        """Update the slash command controller's command list.
+
+        Note: This is a stub implementation for type compatibility.
+        The full slash controller implementation is in upstream.
+
+        Args:
+            commands: Full list of `(command, description, hidden_keywords)` tuples.
+        """
+        # TODO: Implement full slash controller when merged from upstream
+        pass
