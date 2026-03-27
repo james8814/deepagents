@@ -478,6 +478,7 @@ class TestModalScreenCtrlDHandling:
                     notify_mock.assert_called_once_with(
                         "Press Ctrl+D again to quit",
                         timeout=3,
+                        markup=False,
                     )
                     assert app._quit_pending is True
                     exit_mock.assert_not_called()
@@ -531,6 +532,7 @@ class TestModalScreenCtrlDHandling:
                     notify_mock.assert_called_once_with(
                         "Press Ctrl+C again to quit",
                         timeout=3,
+                        markup=False,
                     )
                     assert app._quit_pending is True
                     exit_mock.assert_not_called()
@@ -678,6 +680,7 @@ class TestModalScreenCtrlCHandling:
                 notify_mock.assert_called_once_with(
                     "Press Ctrl+C again to quit",
                     timeout=3,
+                    markup=False,
                 )
                 assert app._quit_pending is True
                 exit_mock.assert_not_called()
@@ -715,6 +718,7 @@ class TestModalScreenCtrlCHandling:
                 notify_mock.assert_called_once_with(
                     "Press Ctrl+C again to quit",
                     timeout=3,
+                    markup=False,
                 )
                 assert app._quit_pending is True
                 exit_mock.assert_not_called()
@@ -758,6 +762,7 @@ class TestModalScreenCtrlCHandling:
                 notify_mock.assert_called_once_with(
                     "Press Ctrl+C again to quit",
                     timeout=3,
+                    markup=False,
                 )
                 assert app._quit_pending is True
                 exit_mock.assert_not_called()
@@ -2630,6 +2635,8 @@ class TestBypassFrozensetDrift:
             if isinstance(node, ast.Constant) and isinstance(node.value, str):
                 val = node.value.strip()
                 if val.startswith("/") and len(val) > 1:
+                    if val.startswith("/skill:"):
+                        continue
                     # Filter out filesystem paths (end with / or contain / after first char)
                     # and other false positives - only keep actual slash commands
                     if val.endswith("/") and val != "/":

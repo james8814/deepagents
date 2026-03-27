@@ -142,7 +142,7 @@ class TestHelpBodyDrift:
         excluded = {"/version", "/skill-creator"}
 
         # Extra commands in help body that are not in COMMANDS (local features)
-        allowed_extra = {"/skill", "/upload"}  # /skill: dynamic skills, /upload: local feature
+        allowed_extra = {"/skill"}  # /skill: dynamic skills
 
         missing = registry_cmds - help_cmds - excluded
         extra = help_cmds - registry_cmds - allowed_extra

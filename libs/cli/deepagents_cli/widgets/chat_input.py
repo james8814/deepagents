@@ -407,7 +407,6 @@ class ChatTextArea(TextArea):
         self._skip_history_change_events = 0
         self._in_history = False
         self._completion_active = False
-        self._app_has_focus = True
         # Buffer quote-prefixed high-frequency key bursts from terminals that
         # emulate paste via rapid key events instead of dispatching a paste
         # event.
@@ -420,12 +419,10 @@ class ChatTextArea(TextArea):
     def set_app_focus(self, *, has_focus: bool) -> None:
         """Set whether the app should show the cursor as active.
 
-        When has_focus=False (e.g., agent is running), disables cursor blink
-        so the cursor doesn't flash while waiting for a response.
+        Args:
+            has_focus: Whether the app input should be focused.
         """
-        self._app_has_focus = has_focus
         self._backslash_pending_time = None
-        self.cursor_blink = has_focus
         if has_focus and not self.has_focus:
             self.call_after_refresh(self.focus)
 
@@ -610,7 +607,7 @@ class ChatTextArea(TextArea):
             return
         self._backslash_pending_time = None
 
-        if event.key == "backslash" and event.character == "\\":
+        if event.key == "backslash":
             self._backslash_pending_time = now
 
         # Modifier+Enter inserts newline — keys derived from BINDINGS
@@ -921,6 +918,7 @@ class ChatInput(Vertical):
         self._popup: CompletionPopup | None = None
         self._completion_manager: MultiCompletionManager | None = None
         self._completion_view: _CompletionViewAdapter | None = None
+        self._slash_controller: SlashCommandController | None = None
 
         # Guard flag: set True before programmatically stripping the mode
         # prefix character so the resulting text-change event does not
@@ -979,9 +977,12 @@ class ChatInput(Vertical):
         self._file_controller = FuzzyFileController(
             self._completion_view, cwd=self._cwd
         )
+        self._slash_controller = SlashCommandController(
+            SLASH_COMMANDS, self._completion_view
+        )
         self._completion_manager = MultiCompletionManager(
             [
-                SlashCommandController(SLASH_COMMANDS, self._completion_view),
+                self._slash_controller,
                 self._file_controller,
             ]  # type: ignore[list-item]  # Controller types are compatible at runtime
         )
@@ -1570,21 +1571,19 @@ class ChatInput(Vertical):
         text, cursor = self._completion_text_and_cursor()
         result = self._completion_manager.on_key(event, text, cursor)
 
-        match result:
-            case CompletionResult.HANDLED:
+        if result == CompletionResult.HANDLED:
+            event.prevent_default()
+            event.stop()
+        elif result == CompletionResult.SUBMIT:
+            event.prevent_default()
+            event.stop()
+            self._submit_value(self._text_area.text.strip())
+        elif result == CompletionResult.IGNORED and event.key == "enter":
+            value = self._text_area.text.strip()
+            if value:
                 event.prevent_default()
                 event.stop()
-            case CompletionResult.SUBMIT:
-                event.prevent_default()
-                event.stop()
-                self._submit_value(self._text_area.text.strip())
-            case CompletionResult.IGNORED if event.key == "enter":
-                # Handle Enter when completion is not active (shell/normal modes)
-                value = self._text_area.text.strip()
-                if value:
-                    event.prevent_default()
-                    event.stop()
-                    self._submit_value(value)
+                self._submit_value(value)
 
     def _get_cursor_offset(self) -> int:
         """Get the cursor offset as a single integer.
@@ -1671,10 +1670,10 @@ class ChatInput(Vertical):
                     self._completion_manager.reset()
 
     def set_cursor_active(self, *, active: bool) -> None:
-        """Set whether the cursor should be actively blinking.
+        """Toggle input focus state (e.g., unfocus while agent is working).
 
-        When active=False (e.g., agent is working), disables cursor blink
-        so the cursor doesn't flash while waiting for a response.
+        Args:
+            active: Whether the input should be focused and accepting input.
         """
         if self._text_area:
             self._text_area.set_app_focus(has_focus=active)
@@ -1813,3 +1812,17 @@ class ChatInput(Vertical):
                 self._text_area.move_cursor((row, remaining))
                 break
             remaining -= len(line) + 1
+
+    def update_slash_commands(self, commands: list[tuple[str, str, str]]) -> None:
+        """Update the slash command controller's command list.
+
+        Args:
+            commands: Full list of `(command, description, hidden_keywords)` tuples.
+        """
+        if not self._slash_controller:
+            return
+
+        self._slash_controller.update_commands(commands)
+        if self._completion_manager and self._text_area:
+            vtext, vcursor = self._completion_text_and_cursor()
+            self._completion_manager.on_text_changed(vtext, vcursor)
