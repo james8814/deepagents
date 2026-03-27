@@ -496,8 +496,14 @@ COMMANDS = {
 # Maximum argument length for display
 MAX_ARG_LENGTH = 150
 
-# Agent configuration
-config: RunnableConfig = {"recursion_limit": 1000}
+config: RunnableConfig = {
+    "recursion_limit": 1000,
+}
+"""Default LangGraph runnable config.
+
+Sets `recursion_limit` to 1000 to accommodate deeply nested agent graphs without
+hitting the default LangGraph ceiling.
+"""
 
 
 class _ShellAllowAll(list):  # noqa: FURB189  # sentinel type, not a general-purpose list subclass
@@ -2070,7 +2076,10 @@ def build_stream_config(
     with contextlib.suppress(importlib_metadata.PackageNotFoundError):
         versions["deepagents"] = importlib_metadata.version("deepagents")
 
-    metadata: dict[str, Any] = {"versions": versions}
+    metadata: dict[str, Any] = {
+        "versions": versions,
+        "ls_integration": "deepagents-cli",
+    }
     if cwd:
         metadata["cwd"] = cwd
     if assistant_id:
