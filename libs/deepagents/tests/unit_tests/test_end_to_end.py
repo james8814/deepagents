@@ -188,7 +188,7 @@ class TestDeepAgentEndToEnd:
             break
 
         assert first_metadata is not None
-        assert first_metadata.get("ls_integration") == "langchain_chat_model"
+        assert first_metadata.get("ls_integration") == "deepagents"
         assert first_metadata.get("tags") == ["main-tag", "session-456"]
         assert first_metadata.get("request_id") == "req-main-123"
         assert first_metadata.get("tenant") == "acme-main"
