@@ -329,10 +329,8 @@ class TestUserMessageHighlighting:
 
 
 def _compose_content(widget: UserMessage | QueuedUserMessage) -> Content:
-    """Extract the `Content` object from a message widget's first yielded Static."""
-    statics = list(widget.compose())
-    assert statics, "compose() yielded no widgets"
-    result = statics[0]._Static__content  # type: ignore[attr-defined]
+    """Extract the `Content` object from a message widget's render output."""
+    result = widget.render()
     assert isinstance(result, Content)
     return result
 

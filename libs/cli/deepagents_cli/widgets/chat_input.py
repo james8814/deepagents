@@ -607,7 +607,7 @@ class ChatTextArea(TextArea):
             return
         self._backslash_pending_time = None
 
-        if event.key == "backslash" and event.character == "\\":
+        if event.key == "backslash":
             self._backslash_pending_time = now
 
         # Modifier+Enter inserts newline — keys derived from BINDINGS
@@ -918,6 +918,7 @@ class ChatInput(Vertical):
         self._popup: CompletionPopup | None = None
         self._completion_manager: MultiCompletionManager | None = None
         self._completion_view: _CompletionViewAdapter | None = None
+        self._slash_controller: SlashCommandController | None = None
 
         # Guard flag: set True before programmatically stripping the mode
         # prefix character so the resulting text-change event does not
@@ -976,9 +977,12 @@ class ChatInput(Vertical):
         self._file_controller = FuzzyFileController(
             self._completion_view, cwd=self._cwd
         )
+        self._slash_controller = SlashCommandController(
+            SLASH_COMMANDS, self._completion_view
+        )
         self._completion_manager = MultiCompletionManager(
             [
-                SlashCommandController(SLASH_COMMANDS, self._completion_view),
+                self._slash_controller,
                 self._file_controller,
             ]  # type: ignore[list-item]  # Controller types are compatible at runtime
         )
@@ -1567,21 +1571,19 @@ class ChatInput(Vertical):
         text, cursor = self._completion_text_and_cursor()
         result = self._completion_manager.on_key(event, text, cursor)
 
-        match result:
-            case CompletionResult.HANDLED:
+        if result == CompletionResult.HANDLED:
+            event.prevent_default()
+            event.stop()
+        elif result == CompletionResult.SUBMIT:
+            event.prevent_default()
+            event.stop()
+            self._submit_value(self._text_area.text.strip())
+        elif result == CompletionResult.IGNORED and event.key == "enter":
+            value = self._text_area.text.strip()
+            if value:
                 event.prevent_default()
                 event.stop()
-            case CompletionResult.SUBMIT:
-                event.prevent_default()
-                event.stop()
-                self._submit_value(self._text_area.text.strip())
-            case CompletionResult.IGNORED if event.key == "enter":
-                # Handle Enter when completion is not active (shell/normal modes)
-                value = self._text_area.text.strip()
-                if value:
-                    event.prevent_default()
-                    event.stop()
-                    self._submit_value(value)
+                self._submit_value(value)
 
     def _get_cursor_offset(self) -> int:
         """Get the cursor offset as a single integer.
@@ -1814,11 +1816,13 @@ class ChatInput(Vertical):
     def update_slash_commands(self, commands: list[tuple[str, str, str]]) -> None:
         """Update the slash command controller's command list.
 
-        Note: This is a stub implementation for type compatibility.
-        The full slash controller implementation is in upstream.
-
         Args:
             commands: Full list of `(command, description, hidden_keywords)` tuples.
         """
-        # TODO: Implement full slash controller when merged from upstream
-        pass
+        if not self._slash_controller:
+            return
+
+        self._slash_controller.update_commands(commands)
+        if self._completion_manager and self._text_area:
+            vtext, vcursor = self._completion_text_and_cursor()
+            self._completion_manager.on_text_changed(vtext, vcursor)

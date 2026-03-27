@@ -2516,7 +2516,7 @@ class DeepAgentsApp(App):
                 "/model [--model-params JSON] [--default], /reload, "
                 "/skill:<name>, /remember, /skill-creator, /theme, /tokens, "
                 "/threads, /trace, "
-                "/update, /changelog, /docs, /feedback, /help\n\n"
+                "/update, /upload, /changelog, /docs, /feedback, /help\n\n"
                 "Interactive Features:\n"
                 "  Enter           Submit your message\n"
                 f"  {newline_shortcut():<15} Insert newline\n"

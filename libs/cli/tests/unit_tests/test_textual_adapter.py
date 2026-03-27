@@ -129,7 +129,9 @@ class TestBuildStreamConfig:
 
     def setup_method(self) -> None:
         """Clear the git-branch cache between tests."""
-        textual_adapter._git_branch_cache.clear()
+        from deepagents_cli import config
+
+        config._git_branch_cache.clear()
 
     def test_assistant_fields_present(self) -> None:
         """Assistant-specific metadata should be present when `assistant_id` is set."""
@@ -168,7 +170,7 @@ class TestBuildStreamConfig:
     def test_git_branch_included_when_available(self) -> None:
         """Git branch should be included in metadata when in a git repo."""
         with patch(
-            "deepagents_cli.textual_adapter._get_git_branch",
+            "deepagents_cli.config._get_git_branch",
             return_value="feature-branch",
         ):
             config = build_stream_config("t-git", assistant_id="agent")
@@ -177,7 +179,7 @@ class TestBuildStreamConfig:
     def test_git_branch_absent_when_not_in_repo(self) -> None:
         """Git branch should be absent when not in a git repo."""
         with patch(
-            "deepagents_cli.textual_adapter._get_git_branch",
+            "deepagents_cli.config._get_git_branch",
             return_value=None,
         ):
             config = build_stream_config("t-nogit", assistant_id="agent")
@@ -215,7 +217,9 @@ class TestGetGitBranch:
 
     def setup_method(self) -> None:
         """Clear the git-branch cache between tests."""
-        textual_adapter._git_branch_cache.clear()
+        from deepagents_cli import config
+
+        config._git_branch_cache.clear()
 
     def test_reuses_cached_branch_for_same_working_directory(self) -> None:
         """Repeated lookups in one repo should only spawn `git` once."""
@@ -223,13 +227,15 @@ class TestGetGitBranch:
 
         with (
             patch(
-                "deepagents_cli.textual_adapter.Path.cwd",
+                "deepagents_cli.config.Path.cwd",
                 return_value=Path("/tmp/repo"),
             ),
             patch("subprocess.run", return_value=result) as mock_run,
         ):
-            assert textual_adapter._get_git_branch() == "feature-branch"
-            assert textual_adapter._get_git_branch() == "feature-branch"
+            from deepagents_cli import config
+
+            assert config._get_git_branch() == "feature-branch"
+            assert config._get_git_branch() == "feature-branch"
 
         assert mock_run.call_count == 1
 
@@ -239,15 +245,19 @@ class TestGetGitBranchOSError:
 
     def setup_method(self) -> None:
         """Clear the git-branch cache between tests."""
-        textual_adapter._git_branch_cache.clear()
+        from deepagents_cli import config
+
+        config._git_branch_cache.clear()
 
     def test_returns_none_on_cwd_oserror(self) -> None:
         """_get_git_branch should return None when cwd is inaccessible."""
         with patch(
-            "deepagents_cli.textual_adapter.Path.cwd",
+            "deepagents_cli.config.Path.cwd",
             side_effect=OSError("deleted"),
         ):
-            assert textual_adapter._get_git_branch() is None
+            from deepagents_cli import config
+
+            assert config._get_git_branch() is None
 
 
 class TestBuildStreamConfigOSError:
@@ -255,12 +265,14 @@ class TestBuildStreamConfigOSError:
 
     def setup_method(self) -> None:
         """Clear the git-branch cache between tests."""
-        textual_adapter._git_branch_cache.clear()
+        from deepagents_cli import config
+
+        config._git_branch_cache.clear()
 
     def test_cwd_absent_on_oserror(self) -> None:
         """Cwd should be absent from metadata when Path.cwd() raises."""
         with patch(
-            "deepagents_cli.textual_adapter.Path.cwd",
+            "deepagents_cli.config.Path.cwd",
             side_effect=OSError("deleted"),
         ):
             config = build_stream_config("t-err", assistant_id="agent")
@@ -1170,7 +1182,9 @@ class TestPrintUsageTable:
         stats.record_request("gpt-4", 100, 50)
         stats.record_request("claude-opus-4-6", 200, 80)
         buf = StringIO()
-        console = Console(file=buf, force_terminal=True, width=120)  # Set wider width to avoid truncation
+        console = Console(
+            file=buf, force_terminal=True, width=120
+        )  # Set wider width to avoid truncation
         print_usage_table(stats, wall_time=2.0, console=console)
         output = buf.getvalue()
         assert "gpt-4" in output

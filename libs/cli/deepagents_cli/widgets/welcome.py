@@ -177,8 +177,14 @@ class WelcomeBanner(Static):
             Content object containing the formatted banner.
         """
         parts: list[str | tuple[str, str | TStyle] | Content] = []
-        colors = theme.get_theme_colors(self)
-        ansi = self.app.theme == "textual-ansi"
+        try:
+            colors = theme.get_theme_colors(self)
+        except Exception:  # noqa: BLE001  # Textual raises when widget has no app
+            colors = theme.DARK_COLORS
+        try:
+            ansi = self.app.theme == "textual-ansi"
+        except Exception:  # noqa: BLE001  # Textual raises when widget has no app
+            ansi = False
 
         banner = get_banner()
         primary_style: str | TStyle = (

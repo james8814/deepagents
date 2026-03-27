@@ -20,6 +20,7 @@ from textual.widgets import Static
 
 from deepagents_cli import theme
 from deepagents_cli.config import (
+    COLORS,
     MODE_DISPLAY_GLYPHS,
     PREFIX_TO_MODE,
     get_glyphs,
@@ -79,25 +80,24 @@ class _TimestampClickMixin:
         _show_timestamp_toast(self)  # type: ignore[arg-type]
 
 
-def _mode_color(mode: str | None, widget_or_app: object | None = None) -> str:
-    """Return the hex color string for a mode, falling back to primary.
+def _mode_color(mode: str | None, widget_or_app: object | None = None) -> str:  # noqa: ARG001  # kept for signature compatibility
+    """Return the hex color string for a mode, using static config COLORS.
 
     Args:
         mode: Mode name (e.g. `'shell'`, `'command'`) or `None`.
         widget_or_app: Textual widget or `App` for theme-aware lookup.
 
     Returns:
-        Color string from the active theme's `ThemeColors`.
+        Color string from `deepagents_cli.config.COLORS`.
     """
-    colors = theme.get_theme_colors(widget_or_app)
     if not mode:
-        return colors.primary
+        return COLORS["primary"]
     if mode == "shell":
-        return colors.mode_bash
+        return COLORS["mode_shell"]
     if mode == "command":
-        return colors.mode_command
+        return COLORS["mode_command"]
     logger.warning("Missing color for mode '%s'; falling back to primary.", mode)
-    return colors.primary
+    return COLORS["primary"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,7 +179,7 @@ class UserMessage(_TimestampClickMixin, Static):
         Returns:
             Styled Content with mode prefix and highlighted mentions.
         """
-        colors = theme.get_theme_colors(self)
+        colors = theme.get_theme_colors()
         parts: list[str | tuple[str, str]] = []
         content = self._content
 
@@ -189,10 +189,10 @@ class UserMessage(_TimestampClickMixin, Static):
         mode = PREFIX_TO_MODE.get(content[:1]) if content else None
         if mode:
             glyph = MODE_DISPLAY_GLYPHS.get(mode, content[0])
-            parts.append((f"{glyph} ", f"bold {_mode_color(mode, self)}"))
+            parts.append((f"{glyph} ", f"bold {_mode_color(mode)}"))
             content = content[1:]
         else:
-            parts.append(("> ", f"bold {colors.primary}"))
+            parts.append(("> ", f"bold {COLORS['primary']}"))
 
         # Highlight @mentions and /commands in the content
         last_end = 0
@@ -265,7 +265,7 @@ class QueuedUserMessage(Static):
         Returns:
             Styled Content with dimmed prefix and body.
         """
-        colors = theme.get_theme_colors(self)
+        colors = theme.get_theme_colors()
         content = self._content
         mode = PREFIX_TO_MODE.get(content[:1]) if content else None
         if mode:
@@ -782,7 +782,7 @@ class ToolCallMessage(Vertical):
             Widgets for header, arguments, status, and output display.
         """
         tool_label = format_tool_display(self._tool_name, self._args)
-        yield Static(tool_label, markup=False, classes="tool-header")
+        yield Static(Content.assemble(tool_label), classes="tool-header")
         # Only show args for tools where header doesn't capture the key info
         if self._tool_name not in _TOOLS_WITH_HEADER_INFO:
             args = self._filtered_args()
@@ -837,51 +837,45 @@ class ToolCallMessage(Vertical):
 
         # Restore based on status (don't restart animations for running tools)
         colors = theme.get_theme_colors(self)
-        match status:
-            case "success":
-                self._status = "success"
-                self._output = output
-                self._update_output_display()
-            case "error":
-                self._status = "error"
-                self._output = output
-                if self._status_widget:
-                    self._status_widget.add_class("error")
-                    error_icon = get_glyphs().error
-                    self._status_widget.update(
-                        Content.styled(f"{error_icon} Error", colors.error)
-                    )
-                    self._status_widget.display = True
-                self._update_output_display()
-            case "rejected":
-                self._status = "rejected"
-                if self._status_widget:
-                    self._status_widget.add_class("rejected")
-                    error_icon = get_glyphs().error
-                    self._status_widget.update(
-                        Content.styled(f"{error_icon} Rejected", colors.warning)
-                    )
-                    self._status_widget.display = True
-            case "skipped":
-                self._status = "skipped"
-                if self._status_widget:
-                    self._status_widget.add_class("rejected")
-                    self._status_widget.update(Content.styled("- Skipped", "dim"))
-                    self._status_widget.display = True
-            case "running":
-                # For running tools, show static "Running..." without animation
-                # (animations shouldn't be restored for archived tools)
-                self._status = "running"
-                if self._status_widget:
-                    self._status_widget.add_class("pending")
-                    frame = get_glyphs().spinner_frames[0]
-                    self._status_widget.update(
-                        Content.styled(f"{frame} Running...", colors.warning)
-                    )
-                    self._status_widget.display = True
-            case _:
-                # pending or unknown - leave as default
-                pass
+        if status == "success":
+            self._status = "success"
+            self._output = output
+            self._update_output_display()
+        elif status == "error":
+            self._status = "error"
+            self._output = output
+            if self._status_widget:
+                self._status_widget.add_class("error")
+                error_icon = get_glyphs().error
+                self._status_widget.update(
+                    Content.styled(f"{error_icon} Error", colors.error)
+                )
+                self._status_widget.display = True
+            self._update_output_display()
+        elif status == "rejected":
+            self._status = "rejected"
+            if self._status_widget:
+                self._status_widget.add_class("rejected")
+                error_icon = get_glyphs().error
+                self._status_widget.update(
+                    Content.styled(f"{error_icon} Rejected", colors.warning)
+                )
+                self._status_widget.display = True
+        elif status == "skipped":
+            self._status = "skipped"
+            if self._status_widget:
+                self._status_widget.add_class("rejected")
+                self._status_widget.update(Content.styled("- Skipped", "dim"))
+                self._status_widget.display = True
+        elif status == "running":
+            self._status = "running"
+            if self._status_widget:
+                self._status_widget.add_class("pending")
+                frame = get_glyphs().spinner_frames[0]
+                self._status_widget.update(
+                    Content.styled(f"{frame} Running...", colors.warning)
+                )
+                self._status_widget.display = True
 
     def set_running(self) -> None:
         """Mark the tool as running (approved and executing).
@@ -1637,21 +1631,13 @@ class ErrorMessage(_TimestampClickMixin, Static):
             error: The error message
             **kwargs: Additional arguments passed to parent
         """
-        # Store raw content for serialization
         self._content = error
-        super().__init__(**kwargs)
-
-    def render(self) -> Content:
-        """Render with theme-aware colors.
-
-        Returns:
-            Styled error content with theme-appropriate color.
-        """
-        colors = theme.get_theme_colors(self)
-        return Content.assemble(
+        colors = theme.get_theme_colors()
+        rendered = Content.assemble(
             Content.styled("Error: ", f"bold {colors.error}"),
-            self._content,
+            error,
         )
+        super().__init__(rendered, **kwargs)
 
     def on_mount(self) -> None:
         """Set border style based on charset mode."""
