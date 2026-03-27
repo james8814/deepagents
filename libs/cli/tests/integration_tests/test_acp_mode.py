@@ -61,6 +61,13 @@ class _AcpSmokeClient(Client):
 
 async def test_cli_acp_mode_starts_session_and_exits() -> None:
     """Test that the CLI can start in ACP mode, initialize a session, and exit."""
+    # Check for required API keys
+    import pytest
+
+    required_keys = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_CLOUD_PROJECT", "NVIDIA_API_KEY"]
+    if not any(os.environ.get(key) for key in required_keys):
+        pytest.skip(f"No API key configured. Set one of: {', '.join(required_keys)}")
+
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
 

@@ -20,8 +20,7 @@ class TestLangSmithSandboxStandard(SandboxIntegrationTests):
     def sandbox(self) -> Iterator[SandboxBackendProtocol]:
         api_key = os.environ.get("LANGSMITH_API_KEY")
         if not api_key:
-            msg = "Missing secrets for LangSmith integration test: set LANGSMITH_API_KEY"
-            raise RuntimeError(msg)
+            pytest.skip("LANGSMITH_API_KEY not set; skipping LangSmith sandbox integration tests")
 
         client = SandboxClient(api_key=api_key)
         ls_sandbox = client.create_sandbox(template_name="deepagents-cli")
