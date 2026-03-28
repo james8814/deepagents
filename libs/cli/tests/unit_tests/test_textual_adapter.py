@@ -210,6 +210,48 @@ class TestBuildStreamConfig:
         assert "model" not in config["configurable"]
         assert "model_params" not in config["configurable"]
 
+    def test_versions_contains_cli_version(self) -> None:
+        """CLI version should always be present in metadata.versions."""
+        from deepagents_cli._version import __version__
+
+        config = build_stream_config("t-ver", assistant_id=None)
+        assert config["metadata"]["versions"]["deepagents-cli"] == __version__
+
+    def test_versions_contains_sdk_version_when_installed(self) -> None:
+        """SDK version should be in versions when deepagents is installed."""
+        with patch(
+            "importlib.metadata.version",
+            return_value="0.5.0",
+        ):
+            config = build_stream_config("t-sdk", assistant_id=None)
+        assert config["metadata"]["versions"]["deepagents"] == "0.5.0"
+
+    def test_versions_omits_sdk_when_not_installed(self) -> None:
+        """SDK version key should be absent when deepagents is not installed."""
+        from importlib.metadata import PackageNotFoundError
+
+        with patch(
+            "importlib.metadata.version",
+            side_effect=PackageNotFoundError("deepagents"),
+        ):
+            config = build_stream_config("t-nosdk", assistant_id=None)
+        assert "deepagents" not in config["metadata"]["versions"]
+        from deepagents_cli._version import __version__
+
+        assert config["metadata"]["versions"]["deepagents-cli"] == __version__
+
+    def test_user_id_included_when_set(self) -> None:
+        """DEEPAGENTS_CLI_USER_ID should appear in metadata when set."""
+        with patch.dict("os.environ", {"DEEPAGENTS_CLI_USER_ID": "mason"}):
+            config = build_stream_config("t-uid", assistant_id=None)
+        assert config["metadata"]["user_id"] == "mason"
+
+    def test_user_id_absent_when_unset(self) -> None:
+        """user_id should be absent from metadata when env var is not set."""
+        with patch.dict("os.environ", {"DEEPAGENTS_CLI_USER_ID": ""}):
+            config = build_stream_config("t-nouid", assistant_id=None)
+        assert "user_id" not in config["metadata"]
+
 
 class TestGetGitBranch:
     """Tests for `_get_git_branch` caching."""

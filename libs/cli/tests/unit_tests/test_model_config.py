@@ -123,6 +123,15 @@ class TestHasProviderCredentials:
         with patch.dict("os.environ", {}, clear=True):
             assert has_provider_credentials("anthropic") is False
 
+    def test_returns_true_with_prefixed_env_var(self):
+        """Returns True when only the DEEPAGENTS_CLI_ prefixed var is set."""
+        with patch.dict(
+            "os.environ",
+            {"DEEPAGENTS_CLI_ANTHROPIC_API_KEY": "sk-prefixed"},
+            clear=True,
+        ):
+            assert has_provider_credentials("anthropic") is True
+
 
 class TestThreadColumnPersistence:
     """Tests for thread selector column visibility persistence."""
@@ -402,6 +411,70 @@ cwd = true
             invalidate_thread_config_cache()
 
 
+class TestResolveEnvVar:
+    """Tests for resolve_env_var prefix override."""
+
+    def test_returns_canonical_value(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Falls back to the canonical env var when no prefix is set."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-canonical")
+        monkeypatch.delenv("DEEPAGENTS_CLI_ANTHROPIC_API_KEY", raising=False)
+        from deepagents_cli.model_config import resolve_env_var
+
+        assert resolve_env_var("ANTHROPIC_API_KEY") == "sk-canonical"
+
+    def test_prefix_beats_canonical(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """DEEPAGENTS_CLI_ prefixed var takes priority over canonical."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-canonical")
+        monkeypatch.setenv("DEEPAGENTS_CLI_ANTHROPIC_API_KEY", "sk-override")
+        from deepagents_cli.model_config import resolve_env_var
+
+        assert resolve_env_var("ANTHROPIC_API_KEY") == "sk-override"
+
+    def test_returns_none_when_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Returns None when neither form is set."""
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("DEEPAGENTS_CLI_ANTHROPIC_API_KEY", raising=False)
+        from deepagents_cli.model_config import resolve_env_var
+
+        assert resolve_env_var("ANTHROPIC_API_KEY") is None
+
+    def test_empty_string_treated_as_unset(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Empty strings are normalized to None."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+        monkeypatch.setenv("DEEPAGENTS_CLI_ANTHROPIC_API_KEY", "")
+        from deepagents_cli.model_config import resolve_env_var
+
+        assert resolve_env_var("ANTHROPIC_API_KEY") is None
+
+    def test_prefix_only(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Works when only the prefixed var is set."""
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.setenv("DEEPAGENTS_CLI_OPENAI_API_KEY", "sk-prefixed")
+        from deepagents_cli.model_config import resolve_env_var
+
+        assert resolve_env_var("OPENAI_API_KEY") == "sk-prefixed"
+
+    def test_empty_prefix_blocks_canonical(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Empty prefix var blocks fallback to canonical (explicit disable)."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-real")
+        monkeypatch.setenv("DEEPAGENTS_CLI_ANTHROPIC_API_KEY", "")
+        from deepagents_cli.model_config import resolve_env_var
+
+        assert resolve_env_var("ANTHROPIC_API_KEY") is None
+
+    def test_skips_double_prefix(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Names already carrying the prefix don't get double-prefixed."""
+        monkeypatch.setenv("DEEPAGENTS_CLI_MY_KEY", "direct")
+        monkeypatch.delenv("DEEPAGENTS_CLI_DEEPAGENTS_CLI_MY_KEY", raising=False)
+        from deepagents_cli.model_config import resolve_env_var
+
+        assert resolve_env_var("DEEPAGENTS_CLI_MY_KEY") == "direct"
+
+
 class TestProviderApiKeyEnv:
     """Tests for PROVIDER_API_KEY_ENV constant."""
 
@@ -606,6 +679,23 @@ api_key_env = "ANTHROPIC_API_KEY"
 
         with patch.dict("os.environ", {}, clear=True):
             assert config.has_credentials("anthropic") is False
+
+    def test_returns_true_with_prefixed_env_var(self, tmp_path):
+        """Returns True when only the DEEPAGENTS_CLI_ prefixed var is set."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text("""
+[models.providers.anthropic]
+models = ["claude-sonnet-4-5"]
+api_key_env = "ANTHROPIC_API_KEY"
+""")
+        config = ModelConfig.load(config_path)
+
+        with patch.dict(
+            "os.environ",
+            {"DEEPAGENTS_CLI_ANTHROPIC_API_KEY": "sk-prefixed"},
+            clear=True,
+        ):
+            assert config.has_credentials("anthropic") is True
 
 
 class TestModelConfigGetBaseUrl:
@@ -1481,17 +1571,22 @@ api_key_env = "BASETEN_API_KEY"
         )
 
     def test_explicit_models_list_skips_auto_discovery(self, tmp_path):
-        """Explicit models list bypasses auto-discovery even when profiles exist."""
+        """Explicit models list bypasses auto-discovery even when profiles exist.
+
+        Uses a provider name not in the built-in registry to avoid interference
+        from registry discovery (baseten was added to the registry in
+        langchain-core 1.2.22, causing this test to fail when baseten is used).
+        """
         config_path = tmp_path / "config.toml"
         config_path.write_text("""
-[models.providers.baseten]
-class_path = "langchain_baseten.chat_models:ChatBaseten"
-api_key_env = "BASETEN_API_KEY"
+[models.providers.my_custom_provider]
+class_path = "langchain_custom.chat_models:ChatCustom"
+api_key_env = "CUSTOM_API_KEY"
 models = ["my-explicit-model"]
 """)
 
         def mock_load(module_path: str) -> dict[str, Any]:
-            if module_path == "langchain_baseten.data._profiles":
+            if module_path == "langchain_custom.data._profiles":
                 return self.FAKE_BASETEN_PROFILES
             msg = "not installed"
             raise ImportError(msg)
@@ -1505,8 +1600,8 @@ models = ["my-explicit-model"]
         ):
             models = get_available_models()
 
-        assert "baseten" in models
-        assert models["baseten"] == ["my-explicit-model"]
+        assert "my_custom_provider" in models
+        assert models["my_custom_provider"] == ["my-explicit-model"]
 
     def test_skips_builtin_registry_providers(self, tmp_path):
         """Does not double-load profiles for providers in the built-in registry."""
