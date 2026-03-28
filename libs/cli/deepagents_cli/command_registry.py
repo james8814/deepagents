@@ -140,15 +140,15 @@ COMMANDS: tuple[SlashCommand, ...] = (
         hidden_keywords="continue history sessions",
     ),
     SlashCommand(
+        name="/trace",
+        description="Open current thread in LangSmith",
+        bypass_tier=BypassTier.SIDE_EFFECT_FREE,
+    ),
+    SlashCommand(
         name="/tokens",
         description="Token usage",
         bypass_tier=BypassTier.QUEUED,
         hidden_keywords="cost",
-    ),
-    SlashCommand(
-        name="/trace",
-        description="Open current thread in LangSmith",
-        bypass_tier=BypassTier.QUEUED,
     ),
     SlashCommand(
         name="/update",
