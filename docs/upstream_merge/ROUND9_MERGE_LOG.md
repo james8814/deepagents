@@ -2,8 +2,8 @@
 
 **日期**: 2026-03-28~29
 **分支**: `upstream-sync-round9`
-**范围**: 42 upstream commits + 1 local fix = 43 total
-**统计**: 77 files changed, +5316/-1554
+**范围**: 42 upstream commits + 2 local fixes = 44 total
+**统计**: 78 files changed, +5442/-1554
 
 ---
 
@@ -66,7 +66,7 @@
 - `test_command_registry.py`: 删除重复的 `/changelog`，`/auto-update` 移至字母序正确位置
 - `test_env_vars.py`: 添加 UTF-8 decode error handling（macOS 外部卷 resource fork）
 - `test_model_config.py`: `test_explicit_models_list_skips_auto_discovery` 用 `my_custom_provider` 替代 `baseten`（baseten 在 langchain-core 1.2.22 中被加入 registry，破坏了原有假设）
-- `test_agent.py`: `TestLsEntriesShim` 标记 xfail（SDK >=0.5.0 技术债提醒，上游也未清理）
+- `test_agent.py`: 删除 `TestLsEntriesShim` 整个 class（`_ls_entries` shim 已不存在，提醒测试使命完成）
 
 ---
 
@@ -75,10 +75,41 @@
 | 套件 | 结果 | 环境 |
 |------|------|------|
 | SDK unit tests | 1019 passed, 73 skipped, 3 xfailed | --reinstall clean venv |
-| CLI unit tests | 待确认 | --reinstall clean venv |
+| CLI unit tests | 2744 passed, 1 skipped | --reinstall clean venv |
 | Evals unit tests | 158 passed | --reinstall clean venv |
 | SDK lint | ✅ All checks passed | — |
 | CLI lint | ✅ All checks passed | — |
+
+---
+
+## SHA 映射表（方案 → 实际）
+
+Cherry-pick 会产生新 SHA。以下映射确保方案中的 commit 引用可追溯到实际分支历史。
+
+| 方案 SHA (upstream) | 实际 SHA (cherry-pick) | 描述 |
+|---|---|---|
+| `fd91a30b` | `28c3a860` | fix(sdk): update recursion limit |
+| `5e23d6d9` | `1ec84532` | chore(sdk): declare schema for remaining tools |
+| `34cb7aab` | `15ab488e` | chore(sdk): compaction test + schema revert |
+| `e859077f` | `b5bc23e2` | fix(cli): exit on ctrl+d empty thread |
+| `5dd80983` | `adce7872` | feat(cli): ls_integration metadata |
+| `8f718650` | `d53e8c2d` | feat(cli): color overrides on themes |
+| `a3b61e5d` | `41c29a1d` | fix(cli): warn filesystem inaccessible |
+| `ad70bde0` | `f671da43` | feat(cli): /auto-update toggle |
+| `15867bfa` | `dd88eaa4` | fix(cli): disable markup blocked-link |
+| `7178b872` | `5aa35d9e` | feat(cli): default langsmith project |
+| `28a32b7d` | `4e04530b` | fix(cli): enforce approval with -y |
+| `7f5c3de9` | `aab98145` | perf(cli): reduce health poll interval |
+| `b4520324` | `40bd7500` | fix(cli): open trace immediately |
+| `42bccca0` | `0eb7b400` | fix(cli): escape exception markup |
+| `744b81b3` | `0e3a2f76` | chore: sync lockfiles |
+| `0a410b4a` | `d606551a` | perf(cli): defer imports |
+| `5a21d0ad` | `bc463816` | feat(cli): global dotenv |
+| `386438f6` | `c73fb55a` | feat(cli): agent-friendly UX |
+| `29647bb4` | `f339ab3a` | feat(cli): DEEPAGENTS_CLI_ prefix |
+| `9bddc52b` | `ea91cf6d` | fix(cli): trace fragmentation |
+
+（22 个 deps bump commits 略，commit message 完全一致可直接 `git log --grep` 查找）
 
 ---
 
