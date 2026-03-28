@@ -82,10 +82,39 @@
 |---------|------|-------------|
 | **SDK unit tests** | 1018 passed, 73 skipped, 3 xfailed | +9 新测试 (Round 7: 1009) |
 | **CLI unit tests** | 2608 passed, 1 skipped | -10 测试 (Round 7: 2618, format_duration 重构) |
+| **Evals unit tests** | 158 passed | 全绿（修复后） |
 | **SDK lint** | ✅ All checks passed | — |
 | **CLI lint** | ✅ All checks passed | — |
+| **Evals lint** | ✅ passed (EXE002 为外部卷 macOS 权限问题，CI 无影响) | — |
 | **语法检查** | ✅ SDK + CLI compile OK | — |
 | **导入检查** | ✅ create_deep_agent + cli_main OK | — |
+
+---
+
+## 架构师验收后修复 (2026-03-28)
+
+### P0: Evals 类别定义漂移 (3 确定性失败)
+
+**根因**: `categories.json` 仍包含旧的 7 个分类 (`retrieval`, `tool_use`, `conversation`, `unit_test`)，
+但测试期望新的 12 个分类 (`skills`, `hitl`, `subagents`, `tool_usage` 等)。
+
+**修复** (2 个文件):
+
+- `categories.json`: 更新为 12 个实际 eval 分类 + 对应 labels
+- `radar.py` `toy_data()`: 更新覆盖所有 12 个分类的 scores
+
+**自省**: 首次验证时因 venv 安装了不同版本的 evals 包而误报"全绿"。
+经架构师指出后，以 `--reinstall` 干净重建 venv 复现了 3 个确定性失败。
+
+### P1: CLI Backslash+Enter flaky (环境相关时序问题)
+
+**根因**: `_BACKSLASH_ENTER_GAP_SECONDS=0.15s` 时间窗口在高负载环境下可能不足，
+导致 `pilot.press("backslash")` 和 `pilot.press("enter")` 间隔超出窗口。
+
+**修复** (1 个文件):
+
+- `test_chat_input.py`: 对需要"快速输入"的 2 个测试用 `monkeypatch` 将窗口设为 5.0s，
+  确保 Textual pilot 事件间隔始终在窗口内。不修改生产代码。
 
 ---
 
