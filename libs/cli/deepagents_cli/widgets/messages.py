@@ -26,6 +26,7 @@ from deepagents_cli.config import (
     get_glyphs,
     is_ascii_mode,
 )
+from deepagents_cli.formatting import format_duration
 from deepagents_cli.input import EMAIL_PREFIX_PATTERN, INPUT_HIGHLIGHT_PATTERN
 from deepagents_cli.tool_display import format_tool_display
 from deepagents_cli.widgets._links import open_style_link
@@ -690,6 +691,12 @@ class ToolCallMessage(Vertical):
         text-style: bold;
     }
 
+    ToolCallMessage .tool-task-desc {
+        color: $text-muted;
+        margin-left: 3;
+        text-style: italic;
+    }
+
     ToolCallMessage .tool-args {
         color: $text-muted;
         margin-left: 3;
@@ -782,9 +789,20 @@ class ToolCallMessage(Vertical):
             Widgets for header, arguments, status, and output display.
         """
         tool_label = format_tool_display(self._tool_name, self._args)
-        yield Static(Content.assemble(tool_label), classes="tool-header")
+        yield Static(tool_label, markup=False, classes="tool-header")
+        # Task: dedicated description line (dim, truncated)
+        if self._tool_name == "task":
+            desc = self._args.get("description", "")
+            if desc:
+                max_len = 120
+                suffix = "..." if len(desc) > max_len else ""
+                truncated = desc[:max_len].rstrip() + suffix
+                yield Static(
+                    Content.styled(truncated, "dim"),
+                    classes="tool-task-desc",
+                )
         # Only show args for tools where header doesn't capture the key info
-        if self._tool_name not in _TOOLS_WITH_HEADER_INFO:
+        elif self._tool_name not in _TOOLS_WITH_HEADER_INFO:
             args = self._filtered_args()
             if args:
                 args_str = ", ".join(
@@ -905,7 +923,7 @@ class ToolCallMessage(Vertical):
         elapsed = ""
         if self._start_time is not None:
             elapsed_secs = int(time() - self._start_time)
-            elapsed = f" ({elapsed_secs}s)"
+            elapsed = f" ({format_duration(elapsed_secs)})"
 
         text = f"{frame} Running...{elapsed}"
         self._status_widget.update(

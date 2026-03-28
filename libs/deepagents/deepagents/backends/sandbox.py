@@ -17,6 +17,7 @@ from abc import ABC, abstractmethod
 from deepagents.backends.protocol import (
     EditResult,
     ExecuteResponse,
+    FileData,
     FileDownloadResponse,
     FileInfo,
     FileUploadResponse,
@@ -28,7 +29,7 @@ from deepagents.backends.protocol import (
     SandboxBackendProtocol,
     WriteResult,
 )
-from deepagents.backends.utils import _get_file_type, create_file_data
+from deepagents.backends.utils import _get_file_type
 
 _GLOB_COMMAND_TEMPLATE = """python3 -c "
 import glob
@@ -308,7 +309,12 @@ except PermissionError:
         if "error" in data:
             return ReadResult(error=data["error"])
 
-        return ReadResult(file_data=create_file_data(data["content"], encoding=data.get("encoding", "utf-8")))
+        return ReadResult(
+            file_data=FileData(
+                content=data["content"],
+                encoding=data.get("encoding", "utf-8"),
+            )
+        )
 
     def write(
         self,
