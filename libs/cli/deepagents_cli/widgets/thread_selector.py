@@ -28,7 +28,6 @@ if TYPE_CHECKING:
 
     from deepagents_cli.sessions import ThreadInfo
 
-from deepagents_cli import theme
 from deepagents_cli.config import (
     build_langsmith_thread_url,
     get_glyphs,

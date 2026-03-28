@@ -56,6 +56,11 @@ class SlashCommand:
 
 COMMANDS: tuple[SlashCommand, ...] = (
     SlashCommand(
+        name="/auto-update",
+        description="Toggle automatic updates on or off",
+        bypass_tier=BypassTier.SIDE_EFFECT_FREE,
+    ),
+    SlashCommand(
         name="/changelog",
         description="Open changelog in browser",
         bypass_tier=BypassTier.SIDE_EFFECT_FREE,
@@ -140,15 +145,15 @@ COMMANDS: tuple[SlashCommand, ...] = (
         hidden_keywords="continue history sessions",
     ),
     SlashCommand(
-        name="/trace",
-        description="Open current thread in LangSmith",
-        bypass_tier=BypassTier.SIDE_EFFECT_FREE,
-    ),
-    SlashCommand(
         name="/tokens",
         description="Token usage",
         bypass_tier=BypassTier.QUEUED,
         hidden_keywords="cost",
+    ),
+    SlashCommand(
+        name="/trace",
+        description="Open current thread in LangSmith",
+        bypass_tier=BypassTier.SIDE_EFFECT_FREE,
     ),
     SlashCommand(
         name="/update",
@@ -157,19 +162,9 @@ COMMANDS: tuple[SlashCommand, ...] = (
         hidden_keywords="upgrade",
     ),
     SlashCommand(
-        name="/auto-update",
-        description="Toggle automatic updates on or off",
-        bypass_tier=BypassTier.SIDE_EFFECT_FREE,
-    ),
-    SlashCommand(
         name="/upload",
         description="Upload a file to the agent's workspace",
         bypass_tier=BypassTier.QUEUED,
-    ),
-    SlashCommand(
-        name="/changelog",
-        description="Open changelog in browser",
-        bypass_tier=BypassTier.SIDE_EFFECT_FREE,
     ),
     SlashCommand(
         name="/version",

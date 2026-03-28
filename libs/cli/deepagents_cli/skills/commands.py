@@ -14,6 +14,8 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from deepagents_cli import theme
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 

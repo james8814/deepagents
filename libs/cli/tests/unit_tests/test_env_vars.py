@@ -53,7 +53,11 @@ def _collect_bare_literals(*, include_registry: bool = False) -> dict[str, set[s
     for py_file in _SRC_DIR.rglob("*.py"):
         if not include_registry and py_file == _REGISTRY_FILE:
             continue
-        matches = set(_ENV_VAR_RE.findall(py_file.read_text()))
+        try:
+            text = py_file.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue  # skip binary/resource-fork files on macOS external volumes
+        matches = set(_ENV_VAR_RE.findall(text))
         if matches:
             hits[str(py_file.relative_to(_SRC_DIR))] = matches
     return hits

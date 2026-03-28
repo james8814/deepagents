@@ -1571,17 +1571,22 @@ api_key_env = "BASETEN_API_KEY"
         )
 
     def test_explicit_models_list_skips_auto_discovery(self, tmp_path):
-        """Explicit models list bypasses auto-discovery even when profiles exist."""
+        """Explicit models list bypasses auto-discovery even when profiles exist.
+
+        Uses a provider name not in the built-in registry to avoid interference
+        from registry discovery (baseten was added to the registry in
+        langchain-core 1.2.22, causing this test to fail when baseten is used).
+        """
         config_path = tmp_path / "config.toml"
         config_path.write_text("""
-[models.providers.baseten]
-class_path = "langchain_baseten.chat_models:ChatBaseten"
-api_key_env = "BASETEN_API_KEY"
+[models.providers.my_custom_provider]
+class_path = "langchain_custom.chat_models:ChatCustom"
+api_key_env = "CUSTOM_API_KEY"
 models = ["my-explicit-model"]
 """)
 
         def mock_load(module_path: str) -> dict[str, Any]:
-            if module_path == "langchain_baseten.data._profiles":
+            if module_path == "langchain_custom.data._profiles":
                 return self.FAKE_BASETEN_PROFILES
             msg = "not installed"
             raise ImportError(msg)
@@ -1595,8 +1600,8 @@ models = ["my-explicit-model"]
         ):
             models = get_available_models()
 
-        assert "baseten" in models
-        assert models["baseten"] == ["my-explicit-model"]
+        assert "my_custom_provider" in models
+        assert models["my_custom_provider"] == ["my-explicit-model"]
 
     def test_skips_builtin_registry_providers(self, tmp_path):
         """Does not double-load profiles for providers in the built-in registry."""

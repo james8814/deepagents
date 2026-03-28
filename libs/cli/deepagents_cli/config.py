@@ -747,7 +747,6 @@ def _parse_extra_skills_dirs(
     return None
 
 
-
 @dataclass
 class Settings:
     """Global settings and environment detection for deepagents-cli.
@@ -871,7 +870,6 @@ class Settings:
             os.environ.get(EXTRA_SKILLS_DIRS),
             _read_config_toml_skills_dirs(),
         )
-
 
         return cls(
             openai_api_key=openai_key,
