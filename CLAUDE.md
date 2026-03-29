@@ -238,6 +238,24 @@ Textual-based terminal UI with:
 - **Local**: `CLIShellBackend` + `FilesystemBackend` + `LocalContextMiddleware`
 - **Remote**: Sandbox backend (Modal/Daytona/Runloop) handles file ops + execute
 
+**CLI Environment Variables** (2026-03-29):
+
+- `DEEPAGENTS_CLI_` prefix: `DEEPAGENTS_CLI_{NAME}` takes priority over `{NAME}`. Resolved via `resolve_env_var()` in `model_config.py`.
+- Priority: `DEEPAGENTS_CLI_X` > shell export `X` > project `.env` > `~/.deepagents/.env`
+- Empty prefix var (`DEEPAGENTS_CLI_X=""`) shields the canonical var — `resolve_env_var` returns `None`.
+- Registry: All `DEEPAGENTS_CLI_*` constants defined in `deepagents_cli/_env_vars.py` with drift-detection test.
+
+**Global Dotenv** (2026-03-29): `~/.deepagents/.env` loaded as fallback after project `.env`. Both use `override=False` — shell exports always win.
+
+**Agent Management** (2026-03-29): `list` and `reset` commands moved under `agents` subcommand:
+
+- `deepagents agents list [--json]`
+- `deepagents agents reset --agent NAME [--target SRC] [--dry-run]`
+
+**Agent-Friendly UX** (2026-03-29): `--stdin` for explicit pipe detection, `--dry-run` for destructive commands, `SystemExit(1)` for error exits in scripted mode.
+
+**ShellAllowListMiddleware** (2026-03-29): Validates shell commands inline for non-interactive mode, returns error `ToolMessage` for rejected commands instead of pausing the graph. Eliminates trace fragmentation.
+
 **Qwen/DashScope Support** (content-builder-agent):
 ```bash
 export DASHSCOPE_API_KEY="your-key"
@@ -360,6 +378,12 @@ Scopes: `deepagents`, `sdk`, `deepagents-cli`, `cli`, `harbor`, `acp`, `examples
 ## Key Implementation Details
 
 **File Result Eviction** (`FilesystemMiddleware`): Tool results >20k tokens are written to `/large_tool_results/{tool_call_id}` with preview + file reference.
+
+**HumanMessage Eviction** (2026-03-28, `FilesystemMiddleware`): HumanMessages exceeding `human_message_token_limit_before_evict` (default 50k tokens) are written to `/conversation_history/{uuid}` and replaced with a truncated preview. Tagged via `lc_evicted_to` in `additional_kwargs`. Controlled by `human_message_token_limit_before_evict` parameter on `FilesystemMiddleware`.
+
+**FileData NotRequired** (2026-03-28): `FileData.created_at` and `FileData.modified_at` are now `NotRequired[str]`. External code constructing `FileData` no longer needs to supply these fields. `create_file_data()` still works but internal code prefers direct `FileData()` construction.
+
+**CRLF Normalization** (2026-03-28): `FilesystemBackend.edit()` normalizes `\r\n` and `\r` to `\n` in both `old_string` and `new_string` before matching.
 
 **Message ID Requirement**: All messages must have IDs for proper state management (see `_ensure_message_ids` in summarization).
 

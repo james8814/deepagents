@@ -201,3 +201,42 @@ def _format_skill_annotations(...) -> str
 
 **升级完成日期**: 2026-02-18
 **Git Commit**: `178b14e feat(skills): SkillsMiddleware V2 完整实施`
+
+---
+
+## Round 8+9 变更摘要 (2026-03-28~29)
+
+### SDK 变更（向后兼容）
+
+**FileData 类型放松**:
+
+- `FileData.created_at` 和 `FileData.modified_at` 从 `str` 改为 `NotRequired[str]`
+- 外部代码构造 `FileData` 时不再需要提供这两个字段
+- `create_file_data()` 仍然可用，签名不变
+
+**HumanMessage 驱逐**:
+
+- `FilesystemMiddleware` 新增参数 `human_message_token_limit_before_evict: int | None = 50000`
+- 超过阈值的 HumanMessage 自动写入文件系统并替换为截断预览
+- 有默认值，不传参时行为不变
+
+**CRLF 规范化**:
+
+- `FilesystemBackend.edit()` 自动将 `old_string`/`new_string` 中的 `\r\n`/`\r` 规范化为 `\n`
+
+**wrap_model_call 返回类型扩展**:
+
+- `FilesystemMiddleware.wrap_model_call` 返回类型从 `ModelResponse[ResponseT]` 扩展为 `ModelResponse[ResponseT] | ExtendedModelResponse`
+- ⚠️ 如果外部团队有自定义 middleware 子类覆写了 `wrap_model_call`/`awrap_model_call`，需要检查返回类型标注
+
+### 依赖版本
+
+- `langchain-core` → 1.2.22
+- `cryptography` → 46.0.6
+- `langchain-google-genai` → >=4.2.1
+
+### 迁移检查清单
+
+- [ ] 确认自定义 `FileData` 构造代码在缺少 `created_at`/`modified_at` 时仍正常
+- [ ] 如有自定义 middleware 覆写 `wrap_model_call`，检查返回类型兼容性
+- [ ] 如严格锁定 `langchain-*` 版本，做依赖求解验证

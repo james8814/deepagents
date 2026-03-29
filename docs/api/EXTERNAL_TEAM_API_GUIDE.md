@@ -557,4 +557,19 @@ from deepagents import AsyncSubAgent, AsyncSubAgentMiddleware
 
 ---
 
-*本指南最后更新：2026-03-13*
+## Round 8+9 变更通知 (2026-03-29)
+
+### 向后兼容变更
+
+- **FileData 类型**: `created_at`/`modified_at` 变为 `NotRequired[str]`。构造 `FileData` 时可省略这两个字段。
+- **FilesystemMiddleware**: 新增 `human_message_token_limit_before_evict` 参数（默认 50000），超大 HumanMessage 自动驱逐到文件系统。
+- **FilesystemBackend.edit()**: 自动规范化 CRLF 行结束符。
+
+### 需要关注的变更
+
+- **`wrap_model_call`/`awrap_model_call` 返回类型**: 从 `ModelResponse[ResponseT]` 扩展为 `ModelResponse[ResponseT] | ExtendedModelResponse`。如果外部团队有自定义 middleware 子类覆写了这些方法，需检查返回类型标注与类型检查结果。
+- **依赖版本下限**: `langchain-core` ≥ 1.2.22, `langchain-google-genai` ≥ 4.2.1。源码直连或严格锁定版本的团队需做依赖求解验证。
+
+---
+
+*本指南最后更新：2026-03-29*

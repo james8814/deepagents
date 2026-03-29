@@ -266,6 +266,19 @@ Slash commands are defined as `SlashCommand` entries in the `COMMANDS` tuple in 
 
 To add a new slash command: (1) add a `SlashCommand` entry to `COMMANDS`, (2) set the appropriate `bypass_tier`, (3) add a handler branch in `_handle_command` in `app.py`, (4) run `make lint && make test` — the drift test will catch any mismatch.
 
+**Environment variable prefix** (2026-03-29):
+
+The CLI supports a `DEEPAGENTS_CLI_` env var prefix. `resolve_env_var("OPENAI_API_KEY")` checks `DEEPAGENTS_CLI_OPENAI_API_KEY` first, then falls back to `OPENAI_API_KEY`. If the prefixed var is present but empty, it shields the canonical var — `resolve_env_var` returns `None`. All `DEEPAGENTS_CLI_*` constants are centralized in `deepagents_cli/_env_vars.py` with a drift-detection test.
+
+**Global dotenv** (2026-03-29): `~/.deepagents/.env` is loaded as a fallback after project `.env`. Both use `override=False` — shell exports always take precedence. `/reload` no longer overwrites shell-exported variables.
+
+**Agent management subcommand** (2026-03-29): `list` and `reset` are now under `deepagents agents`:
+
+- `deepagents agents list [--json]`
+- `deepagents agents reset --agent NAME [--target SRC] [--dry-run]`
+
+**ShellAllowListMiddleware** (2026-03-29): Non-interactive mode with a restrictive shell allow-list now validates commands inline via `ShellAllowListMiddleware` instead of using the HITL interrupt/resume path. This eliminates LangSmith trace fragmentation.
+
 **Adding a new model provider:**
 
 The CLI supports LangChain-based chat model providers as optional dependencies. To add a new provider, update these files (all entries alphabetically sorted):

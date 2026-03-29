@@ -153,7 +153,7 @@ def show_list_help() -> None:
     """
     console.print()
     console.print("[bold]Usage:[/bold]", style=COLORS["primary"])
-    console.print("  deepagents list [options]")
+    console.print("  deepagents agents list [options]")
     console.print()
     console.print(
         "List all agents found in ~/.deepagents/. Each agent has its own",
@@ -165,8 +165,8 @@ def show_list_help() -> None:
     _print_option_section()
     console.print()
     console.print("[bold]Examples:[/bold]", style=theme.PRIMARY)
-    console.print("  deepagents list")
-    console.print("  deepagents list --json")
+    console.print("  deepagents agents list")
+    console.print("  deepagents agents list --json")
     console.print()
 
 
@@ -193,7 +193,7 @@ def show_reset_help() -> None:
     """Show help information for the `reset` subcommand."""
     console.print()
     console.print("[bold]Usage:[/bold]", style=COLORS["primary"])
-    console.print("  deepagents reset --agent NAME [--target SRC]")
+    console.print("  deepagents agents reset --agent NAME [--target SRC]")
     console.print()
     console.print(
         "Restore an agent's AGENTS.md to the built-in default, or copy",
@@ -212,9 +212,9 @@ def show_reset_help() -> None:
     )
     console.print()
     console.print("[bold]Examples:[/bold]", style=COLORS["primary"])
-    console.print("  deepagents reset --agent coder")
-    console.print("  deepagents reset --agent coder --target researcher")
-    console.print("  deepagents reset --agent coder --dry-run")
+    console.print("  deepagents agents reset --agent coder")
+    console.print("  deepagents agents reset --agent coder --target researcher")
+    console.print("  deepagents agents reset --agent coder --dry-run")
     console.print()
 
 
