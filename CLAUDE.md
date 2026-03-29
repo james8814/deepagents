@@ -420,7 +420,7 @@ Scopes: `deepagents`, `sdk`, `deepagents-cli`, `cli`, `harbor`, `acp`, `examples
 - **SkillsMiddleware V2 Design**: `docs/skillsmiddleware_docs/DeepAgents_SkillsMiddleware_V2_升级设计方案_final.md`
 - **V2 Verification Report**: `docs/skillsmiddleware_docs/SkillsMiddleware_V2_核查报告.md`
 - **Phase 3 Code Review**: `docs/skillsmiddleware_docs/Phase3_CodeReview_Report.md`
-- **SDK Upgrade Guide**: `docs/SDK_UPGRADE_GUIDE.md`
+- **SDK Upgrade Guide**: `docs/api/SDK_UPGRADE_GUIDE.md`
 
 **V5.0 Upload Adapter Documentation**:
 - **User Guide**: `docs/UPLOAD_ADAPTER_GUIDE.md`
