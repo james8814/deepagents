@@ -170,6 +170,129 @@ def test_sandbox_edit_with_special_strings() -> None:
     sandbox.edit("/test/file.txt", old_string, new_string, replace_all=True)
 
     assert sandbox.last_command is not None
+    assert large_old not in sandbox.last_command
+
+
+def test_sandbox_edit_upload_cleans_up_temp_files() -> None:
+    """Test that temp files are removed from the sandbox after a successful edit."""
+    sandbox = MockSandbox()
+    large_old = "x" * (_EDIT_INLINE_MAX_BYTES + 1)
+    sandbox._file_store["/test/file.txt"] = f"prefix {large_old} suffix".encode()
+
+    result = sandbox.edit("/test/file.txt", large_old, "new")
+
+    assert result.error is None
+    assert not any(k.startswith("/tmp/.deepagents_edit_") for k in sandbox._file_store)  # noqa: S108
+
+
+def test_sandbox_edit_upload_string_not_found() -> None:
+    """Test that upload-path edit returns error when old_string is absent."""
+    sandbox = MockSandbox()
+    large_old = "x" * (_EDIT_INLINE_MAX_BYTES + 1)
+    sandbox._file_store["/test/file.txt"] = b"completely different content"
+
+    result = sandbox.edit("/test/file.txt", large_old, "new")
+
+    assert result.error is not None
+    assert "not found" in result.error.lower()
+
+
+def test_sandbox_edit_upload_multiple_occurrences_without_replace_all() -> None:
+    """Test that upload-path edit errors on multiple matches without replace_all."""
+    sandbox = MockSandbox()
+    large_old = "x" * (_EDIT_INLINE_MAX_BYTES + 1)
+    sandbox._file_store["/test/file.txt"] = f"a{large_old}b{large_old}c".encode()
+
+    result = sandbox.edit("/test/file.txt", large_old, "y")
+
+    assert result.error is not None
+    assert "multiple times" in result.error.lower()
+
+
+def test_sandbox_edit_upload_partial_upload_failure() -> None:
+    """Test that upload-path edit surfaces error when one of two uploads fails."""
+    sandbox = MockSandbox()
+    large_old = "x" * (_EDIT_INLINE_MAX_BYTES + 1)
+    sandbox._file_store["/test/file.txt"] = f"prefix {large_old} suffix".encode()
+
+    def partial_failure(
+        files: list[tuple[str, bytes]],
+    ) -> list[FileUploadResponse]:
+        return [
+            FileUploadResponse(path=files[0][0], error=None),
+            FileUploadResponse(path=files[1][0], error="disk_full"),
+        ]
+
+    sandbox.upload_files = partial_failure  # type: ignore[assignment]
+
+    result = sandbox.edit("/test/file.txt", large_old, "new")
+
+    assert result.error is not None
+    assert "disk_full" in result.error
+
+
+# -- remaining template tests --------------------------------------------------
+
+
+def test_read_command_template_format() -> None:
+    """Test that _READ_COMMAND_TEMPLATE can be formatted without KeyError."""
+    path_b64 = base64.b64encode(b"/test/file.txt").decode("ascii")
+    cmd = _READ_COMMAND_TEMPLATE.format(
+        path_b64=path_b64,
+        file_type="text",
+        offset=0,
+        limit=2000,
+    )
+
+    assert "python3 -c" in cmd
+    assert path_b64 in cmd
+
+
+def test_edit_command_template_format() -> None:
+    """Test that _EDIT_COMMAND_TEMPLATE can be formatted without KeyError."""
+    payload_b64 = base64.b64encode(b'{"path":"/f","old":"a","new":"b"}').decode("ascii")
+    cmd = _EDIT_COMMAND_TEMPLATE.format(payload_b64=payload_b64)
+
+    assert "python3 -c" in cmd
+    assert payload_b64 in cmd
+    assert "__DEEPAGENTS_EDIT_EOF__" in cmd
+
+
+def test_edit_command_template_ends_with_newline() -> None:
+    """Test that _EDIT_COMMAND_TEMPLATE preserves the trailing newline after EOF."""
+    assert _EDIT_COMMAND_TEMPLATE.endswith("\n")
+
+
+def test_edit_tmpfile_template_format() -> None:
+    """Test that _EDIT_TMPFILE_TEMPLATE can be formatted without KeyError."""
+    old_b64 = base64.b64encode(b"/tmp/old").decode("ascii")
+    new_b64 = base64.b64encode(b"/tmp/new").decode("ascii")
+    tgt_b64 = base64.b64encode(b"/test/file.txt").decode("ascii")
+
+    cmd = _EDIT_TMPFILE_TEMPLATE.format(
+        old_path_b64=old_b64,
+        new_path_b64=new_b64,
+        target_b64=tgt_b64,
+        replace_all=False,
+    )
+
+    assert "python3 -c" in cmd
+    assert old_b64 in cmd
+    assert new_b64 in cmd
+    assert tgt_b64 in cmd
+
+
+def test_sandbox_read_embeds_b64_path_not_raw() -> None:
+    """Test that read() uses base64-encoded path, not raw path in execute()."""
+    sandbox = MockSandbox()
+    sandbox._next_output = json.dumps({"encoding": "utf-8", "content": "content"})
+
+    sandbox.read("/test/file.txt", offset=0, limit=50)
+
+    # read() should call execute() with base64-encoded path
+    assert sandbox.last_command is not None
+    assert "/test/file.txt" not in sandbox.last_command
+
 
 
 def test_sandbox_grep_literal_search() -> None:
