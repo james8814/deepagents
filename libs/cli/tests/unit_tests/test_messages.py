@@ -18,6 +18,9 @@ from deepagents_cli.widgets.messages import (
     ToolCallMessage,
     UserMessage,
     _show_timestamp_toast,
+    _strip_frontmatter,
+    _strip_success_exit_line,
+
 )
 
 # Content that previously caused MarkupError crashes
@@ -647,3 +650,136 @@ class TestGenericPreviewTruncation:
         result = msg._format_output(output, is_preview=False)
         assert result.truncation is None
         assert result.content.plain == output
+
+
+class TestStripFrontmatter:
+    """Test _strip_frontmatter helper."""
+
+    def test_strips_yaml_frontmatter(self) -> None:
+        text = "---\nname: test\ndescription: A test\n---\n\n# Body\nContent"
+        assert _strip_frontmatter(text) == "# Body\nContent"
+
+    def test_no_frontmatter_unchanged(self) -> None:
+        text = "# No frontmatter\nJust content"
+        assert _strip_frontmatter(text) == text
+
+    def test_unclosed_frontmatter_unchanged(self) -> None:
+        text = "---\nname: test\nno closing marker"
+        assert _strip_frontmatter(text) == text
+
+    def test_empty_string(self) -> None:
+        assert _strip_frontmatter("") == ""
+
+    def test_leading_whitespace_before_frontmatter(self) -> None:
+        text = "\n  ---\nname: test\n---\n\nBody"
+        assert _strip_frontmatter(text) == "Body"
+
+    def test_frontmatter_only(self) -> None:
+        text = "---\nname: test\n---\n"
+        assert _strip_frontmatter(text) == ""
+
+
+class TestSkillMessageMarkupSafety:
+    """Test SkillMessage handles content with brackets safely."""
+
+    @pytest.mark.parametrize("content", MARKUP_INJECTION_CASES)
+    def test_skill_message_no_markup_error(self, content: str) -> None:
+        """SkillMessage should not raise on bracket content."""
+        msg = SkillMessage(
+            skill_name="test",
+            description=content,
+            body=content,
+            args=content,
+        )
+        # Construction should not raise; compose() needs a running app
+        # (Markdown widget) so we verify fields instead.
+        assert msg._description == content
+        assert msg._args == content
+
+    def test_skill_message_stores_fields(self) -> None:
+        msg = SkillMessage(
+            skill_name="web-research",
+            description="Research topics",
+            source="user",
+            body="# Instructions\nDo stuff",
+            args="find quantum",
+        )
+        assert msg._skill_name == "web-research"
+        assert msg._description == "Research topics"
+        assert msg._source == "user"
+        assert msg._body == "# Instructions\nDo stuff"
+        assert msg._args == "find quantum"
+        assert msg._expanded is False
+
+    def test_skill_message_strips_frontmatter(self) -> None:
+        """Body with frontmatter should have it stripped for display."""
+        body = "---\nname: test\ndescription: A test\n---\n\n# Real content"
+        msg = SkillMessage(skill_name="test", body=body)
+        assert msg._stripped_body == "# Real content"
+        # Raw body preserved for serialization
+        assert msg._body == body
+
+    def test_skill_message_no_args_skips_field(self) -> None:
+        """When no args are provided, internal state should reflect that."""
+        msg = SkillMessage(skill_name="test", args="")
+        assert msg._args == ""
+        assert msg._description == ""
+
+    def test_skill_message_with_description_and_args(self) -> None:
+        msg = SkillMessage(
+            skill_name="test",
+            description="A test skill",
+            args="do something",
+        )
+        assert msg._description == "A test skill"
+        assert msg._args == "do something"
+
+    def test_skill_message_toggle_state(self) -> None:
+        msg = SkillMessage(skill_name="test", body="some body")
+        assert msg._expanded is False
+        msg._expanded = True
+        assert msg._expanded is True
+
+
+class TestStripSuccessExitLine:
+    """Test _strip_success_exit_line helper."""
+
+    def test_strips_success_trailer(self) -> None:
+        text = "hello world\n[Command succeeded with exit code 0]"
+        assert _strip_success_exit_line(text) == "hello world"
+
+    def test_strips_success_trailer_with_trailing_whitespace(self) -> None:
+        text = "output\n[Command succeeded with exit code 0]  \n"
+        assert _strip_success_exit_line(text) == "output"
+
+    def test_preserves_failed_exit_code(self) -> None:
+        text = "error\n[Command failed with exit code 1]"
+        assert _strip_success_exit_line(text) == text
+
+    def test_preserves_non_zero_success_code(self) -> None:
+        """Only exit code 0 is stripped; other codes are untouched."""
+        text = "output\n[Command succeeded with exit code 2]"
+        assert _strip_success_exit_line(text) == text
+
+    def test_empty_string(self) -> None:
+        assert _strip_success_exit_line("") == ""
+
+    def test_no_trailer(self) -> None:
+        text = "just some output"
+        assert _strip_success_exit_line(text) == text
+
+    def test_only_trailer(self) -> None:
+        text = "[Command succeeded with exit code 0]"
+        assert _strip_success_exit_line(text) == ""
+
+    def test_preserves_mid_string_trailer(self) -> None:
+        """Trailer not at end of string should be left intact."""
+        text = "before\n[Command succeeded with exit code 0]\nafter"
+        assert _strip_success_exit_line(text) == text
+
+    def test_set_success_strips_trailer(self) -> None:
+        """Integration: set_success should strip the exit code 0 line."""
+        msg = ToolCallMessage("execute", {"command": "echo hi"})
+        msg.set_success("hi\n[Command succeeded with exit code 0]")
+        assert msg._output == "hi"
+
