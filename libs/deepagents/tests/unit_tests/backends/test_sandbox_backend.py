@@ -328,3 +328,178 @@ def test_sandbox_grep_literal_search() -> None:
     # Verify the command uses grep -rHnF for literal search (combined flags)
     assert sandbox.last_command is not None
     assert "grep -rHnF" in sandbox.last_command
+
+
+# -- upload/download failure tests --------------------------------------------
+
+
+def test_sandbox_write_returns_error_on_upload_failure() -> None:
+    """Test that write() surfaces upload_files errors."""
+    sandbox = MockSandbox()
+
+    def failing_upload(
+        files: list[tuple[str, bytes]],
+    ) -> list[FileUploadResponse]:
+        return [FileUploadResponse(path=files[0][0], error="permission_denied")]
+
+    sandbox.upload_files = failing_upload  # type: ignore[assignment]
+
+    result = sandbox.write("/test/file.txt", "content")
+
+    assert result.error is not None
+    assert "Failed to write" in result.error
+    assert result.path is None
+
+
+def test_sandbox_edit_upload_returns_error_on_upload_failure() -> None:
+    """Test that upload-path edit surfaces upload_files errors."""
+    sandbox = MockSandbox()
+    large_old = "x" * (_EDIT_INLINE_MAX_BYTES + 1)
+    sandbox._file_store["/test/file.txt"] = f"prefix {large_old} suffix".encode()
+
+    def failing_upload(
+        files: list[tuple[str, bytes]],
+    ) -> list[FileUploadResponse]:
+        return [FileUploadResponse(path=f[0], error="permission_denied") for f in files]
+
+    sandbox.upload_files = failing_upload  # type: ignore[assignment]
+
+    result = sandbox.edit("/test/file.txt", large_old, "new")
+
+    assert result.error is not None
+    assert "Error editing file" in result.error
+
+
+def test_sandbox_edit_upload_binary_file_returns_error() -> None:
+    """Test that upload-path edit returns a clear error for non-UTF-8 files."""
+    sandbox = MockSandbox()
+    large_old = "x" * (_EDIT_INLINE_MAX_BYTES + 1)
+    sandbox._file_store["/test/binary.bin"] = b"\x80\x81\x82\xff"
+
+    result = sandbox.edit("/test/binary.bin", large_old, "new")
+
+    assert result.error is not None
+    assert "not a text file" in result.error
+
+
+def test_sandbox_write_returns_correct_result_on_success() -> None:
+    """Test that write() returns a well-formed WriteResult on success."""
+    sandbox = MockSandbox()
+
+    result = sandbox.write("/test/file.txt", "content")
+
+    assert result.error is None
+    assert result.path == "/test/file.txt"
+
+
+def test_sandbox_write_returns_error_on_empty_upload_response() -> None:
+    """Test that write() handles upload_files returning an empty list."""
+    sandbox = MockSandbox()
+    sandbox.upload_files = lambda _files: []  # type: ignore[assignment]
+
+    result = sandbox.write("/test/file.txt", "content")
+
+    assert result.error is not None
+    assert "no response" in result.error
+
+
+def test_sandbox_edit_upload_returns_error_on_empty_upload_response() -> None:
+    """Test that upload-path edit handles upload_files returning empty list."""
+    sandbox = MockSandbox()
+    large_old = "x" * (_EDIT_INLINE_MAX_BYTES + 1)
+    sandbox._file_store["/test/file.txt"] = f"prefix {large_old} suffix".encode()
+    sandbox.upload_files = lambda _files: []  # type: ignore[assignment]
+
+    result = sandbox.edit("/test/file.txt", large_old, "new")
+
+    assert result.error is not None
+    assert "no response" in result.error
+
+
+def test_sandbox_edit_upload_surfaces_upload_error_code() -> None:
+    """Test that upload-path edit includes error code from upload_files."""
+    sandbox = MockSandbox()
+    large_old = "x" * (_EDIT_INLINE_MAX_BYTES + 1)
+
+    def upload_with_error(
+        files: list[tuple[str, bytes]],
+    ) -> list[FileUploadResponse]:
+        return [
+            FileUploadResponse(path=files[0][0], error="permission_denied"),
+            FileUploadResponse(path=files[1][0], error="permission_denied"),
+        ]
+
+    sandbox.upload_files = upload_with_error  # type: ignore[assignment]
+
+    result = sandbox.edit("/test/file.txt", large_old, "new")
+
+    assert result.error is not None
+    assert "permission_denied" in result.error
+
+
+# -- boundary + catch-all tests ------------------------------------------------
+
+
+def test_sandbox_edit_at_exact_threshold_uses_inline() -> None:
+    """Test that payload of exactly _EDIT_INLINE_MAX_BYTES uses the inline path."""
+    sandbox = MockSandbox()
+    sandbox._next_output = json.dumps({"count": 1})
+    # Create old+new whose combined UTF-8 byte length == threshold
+    old = "x" * _EDIT_INLINE_MAX_BYTES
+    new = ""
+
+    result = sandbox.edit("/test/file.txt", old, new)
+
+    assert result.error is None
+    assert len(sandbox._uploaded) == 0  # inline path — no uploads
+
+
+def test_sandbox_edit_one_over_threshold_uses_upload() -> None:
+    """Test that payload of _EDIT_INLINE_MAX_BYTES + 1 uses the upload path."""
+    sandbox = MockSandbox()
+    old = "x" * (_EDIT_INLINE_MAX_BYTES + 1)
+    sandbox._file_store["/test/file.txt"] = f"prefix {old} suffix".encode()
+
+    result = sandbox.edit("/test/file.txt", old, "new")
+
+    assert result.error is None
+    assert len(sandbox._uploaded) > 0  # upload path — temp files uploaded
+
+
+def test_map_edit_error_unknown_code_falls_through() -> None:
+    """Test that _map_edit_error returns a generic error for unrecognized codes."""
+    result = BaseSandbox._map_edit_error("temp_read_failed", "/test/file.txt", "old")
+
+    assert result.error is not None
+    assert "temp_read_failed" in result.error
+    assert "/test/file.txt" in result.error
+
+
+def test_sandbox_edit_upload_malformed_output_cleans_up() -> None:
+    """Test that upload-path edit cleans up temp files on malformed output."""
+    sandbox = MockSandbox()
+    large_old = "x" * (_EDIT_INLINE_MAX_BYTES + 1)
+    sandbox._file_store["/test/file.txt"] = f"prefix {large_old} suffix".encode()
+    cleanup_commands: list[str] = []
+
+    original_execute = sandbox.execute
+
+    def tracking_execute(command: str, *, timeout: int | None = None) -> ExecuteResponse:
+        if command.startswith("rm -f"):
+            cleanup_commands.append(command)
+            return ExecuteResponse(output="", exit_code=0)
+        # For the edit command, return malformed output
+        resp = original_execute(command, timeout=timeout)
+        if "old_path = base64.b64decode(" in command:
+            return ExecuteResponse(output="crash traceback", exit_code=1)
+        return resp
+
+    sandbox.execute = tracking_execute  # type: ignore[assignment]
+
+    result = sandbox.edit("/test/file.txt", large_old, "new")
+
+    assert result.error is not None
+    assert "unexpected server response" in result.error
+    assert len(cleanup_commands) == 1
+    assert ".deepagents_edit_" in cleanup_commands[0]
+
