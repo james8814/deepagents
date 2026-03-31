@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from pathlib import Path
+    from typing import Protocol
 
     from langchain.agents.middleware.human_in_the_loop import (
         ApproveDecision,
@@ -29,6 +30,17 @@ if TYPE_CHECKING:
 
     # Type alias matching HITLResponse["decisions"] element type
     HITLDecision = ApproveDecision | EditDecision | RejectDecision
+
+    class _TokensUpdateCallback(Protocol):
+        """Callback signature for `_on_tokens_update`."""
+
+        def __call__(self, count: int, *, approximate: bool = False) -> None: ...
+
+    class _TokensShowCallback(Protocol):
+        """Callback signature for `_on_tokens_show`."""
+
+        def __call__(self, *, approximate: bool = False) -> None: ...
+
 
 from deepagents_cli._ask_user_types import AskUserRequest
 from deepagents_cli._cli_context import CLIContext  # noqa: TC001
@@ -286,9 +298,15 @@ class TextualUIAdapter:
         self._current_tool_messages: dict[str, ToolCallMessage] = {}
         self._token_tracker: Any = None
 
-    def set_token_tracker(self, tracker: Any) -> None:  # noqa: ANN401  # Dynamic tracker type from Textual
-        """Set the token tracker for usage tracking."""
-        self._token_tracker = tracker
+        # Token display callbacks (set by the app after construction)
+        self._on_tokens_update: _TokensUpdateCallback | None = None
+        """Called with total context tokens after each LLM response."""
+
+        self._on_tokens_hide: Callable[[], None] | None = None
+        """Called to hide the token display during streaming."""
+
+        self._on_tokens_show: _TokensShowCallback | None = None
+        """Called to restore the token display with the cached value."""
 
     def finalize_pending_tools_with_error(self, error: str) -> None:
         """Mark all pending/running tool widgets as error and clear tracking.
@@ -1158,100 +1176,17 @@ async def execute_task_textual(
                 await dispatch_hook("task.complete", {"thread_id": thread_id})
                 break
 
-    except asyncio.CancelledError:
-        # Clear active message immediately so it won't block pruning
-        # If we don't do this, the store still thinks it's actice and protects
-        # from pruning, which breaks get_messages_to_prune(), potentially
-        # blocking all future pruning
-        if adapter._set_active_message:
-            adapter._set_active_message(None)
-
-        # Hide spinner (may still show "Offloading" if interrupted mid-offload)
-        if adapter._set_spinner:
-            await adapter._set_spinner(None)
-
-        await adapter._mount_message(AppMessage("Interrupted by user"))
-
-        # Save accumulated state before marking tools as rejected (best-effort)
-        # State update failures shouldn't prevent cleanup
-        try:
-            interrupted_msg = _build_interrupted_ai_message(
-                pending_text_by_namespace,
-                adapter._current_tool_messages,
-            )
-            if interrupted_msg:
-                await agent.aupdate_state(config, {"messages": [interrupted_msg]})
-
-            cancellation_msg = HumanMessage(
-                content="[SYSTEM] Task interrupted by user. "
-                "Previous operation was cancelled."
-            )
-            await agent.aupdate_state(config, {"messages": [cancellation_msg]})
-        except Exception:
-            logger.debug("Failed to save interrupted state", exc_info=True)
-
-        # Mark tools as rejected AFTER saving state
-        for tool_msg in list(adapter._current_tool_messages.values()):
-            tool_msg.set_rejected()
-        adapter._current_tool_messages.clear()
-
-        # Report tokens even on interrupt (or restore display if none captured)
-        turn_stats.wall_time_seconds = time.monotonic() - start_time
-        if adapter._token_tracker:
-            if captured_input_tokens or captured_output_tokens:
-                adapter._token_tracker.add(
-                    captured_input_tokens, captured_output_tokens
-                )
-            else:
-                adapter._token_tracker.show()  # Restore previous value
-        return turn_stats
-
-    except KeyboardInterrupt:
-        # Clear active message immediately so it won't block pruning
-        # If we don't do this, the store still thinks it's actice and protects
-        # from pruning, which breaks get_messages_to_prune(), potentially
-        # blocking all future pruning
-        if adapter._set_active_message:
-            adapter._set_active_message(None)
-
-        # Hide spinner (may still show "Offloading" if interrupted mid-offload)
-        if adapter._set_spinner:
-            await adapter._set_spinner(None)
-
-        await adapter._mount_message(AppMessage("Interrupted by user"))
-
-        # Save accumulated state before marking tools as rejected (best-effort)
-        # State update failures shouldn't prevent cleanup
-        try:
-            interrupted_msg = _build_interrupted_ai_message(
-                pending_text_by_namespace,
-                adapter._current_tool_messages,
-            )
-            if interrupted_msg:
-                await agent.aupdate_state(config, {"messages": [interrupted_msg]})
-
-            cancellation_msg = HumanMessage(
-                content="[SYSTEM] Task interrupted by user. "
-                "Previous operation was cancelled."
-            )
-            await agent.aupdate_state(config, {"messages": [cancellation_msg]})
-        except Exception:
-            logger.debug("Failed to save interrupted state", exc_info=True)
-
-        # Mark tools as rejected AFTER saving state
-        for tool_msg in list(adapter._current_tool_messages.values()):
-            tool_msg.set_rejected()
-        adapter._current_tool_messages.clear()
-
-        # Report tokens even on interrupt (or restore display if none captured)
-        turn_stats.wall_time_seconds = time.monotonic() - start_time
-        if adapter._token_tracker:
-            if captured_input_tokens or captured_output_tokens:
-                adapter._token_tracker.add(
-                    captured_input_tokens, captured_output_tokens
-                )
-            else:
-                adapter._token_tracker.show()  # Restore previous value
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        await _handle_interrupt_cleanup(
+            adapter=adapter,
+            agent=agent,
+            config=config,
+            pending_text_by_namespace=pending_text_by_namespace,
+            captured_input_tokens=captured_input_tokens,
+            captured_output_tokens=captured_output_tokens,
+            turn_stats=turn_stats,
+            start_time=start_time,
+        )
         return turn_stats
 
     # Update token tracker and return stats
@@ -1259,6 +1194,147 @@ async def execute_task_textual(
     if adapter._token_tracker and (captured_input_tokens or captured_output_tokens):
         adapter._token_tracker.add(captured_input_tokens, captured_output_tokens)
     return turn_stats
+
+
+async def _handle_interrupt_cleanup(
+    *,
+    adapter: TextualUIAdapter,
+    agent: Any,  # noqa: ANN401  # Dynamic agent graph type
+    config: RunnableConfig,
+    pending_text_by_namespace: dict[tuple, str],
+    captured_input_tokens: int,
+    captured_output_tokens: int,
+    turn_stats: SessionStats,
+    start_time: float,
+) -> None:
+    """Shared cleanup for CancelledError and KeyboardInterrupt.
+
+    Args:
+        adapter: UI adapter with display callbacks.
+        agent: The LangGraph agent.
+        config: Runnable config with `thread_id`.
+        pending_text_by_namespace: Accumulated text per namespace.
+        captured_input_tokens: Input tokens captured before interrupt.
+        captured_output_tokens: Output tokens captured before interrupt.
+        turn_stats: Stats for the current turn.
+        start_time: Monotonic timestamp when the turn began.
+    """
+    from langchain_core.messages import HumanMessage
+
+    # Clear active message immediately so it won't block pruning.
+    # If we don't do this, the store still thinks it's active and protects
+    # from pruning, which breaks get_messages_to_prune(), potentially
+    # blocking all future pruning.
+    if adapter._set_active_message:
+        adapter._set_active_message(None)
+
+    # Hide spinner (may still show "Offloading" if interrupted mid-offload)
+    if adapter._set_spinner:
+        await adapter._set_spinner(None)
+
+    await adapter._mount_message(AppMessage("Interrupted by user"))
+
+    interrupted_msg = _build_interrupted_ai_message(
+        pending_text_by_namespace,
+        adapter._current_tool_messages,
+    )
+
+    # Save accumulated state before marking tools as rejected (best-effort).
+    # State update failures shouldn't prevent cleanup.
+    try:
+        if interrupted_msg:
+            await agent.aupdate_state(config, {"messages": [interrupted_msg]})
+
+        cancellation_msg = HumanMessage(
+            content="[SYSTEM] Task interrupted by user. "
+            "Previous operation was cancelled."
+        )
+        await agent.aupdate_state(config, {"messages": [cancellation_msg]})
+    except Exception:
+        logger.warning("Failed to save interrupted state", exc_info=True)
+
+    # Mark tools as rejected AFTER saving state
+    for tool_msg in list(adapter._current_tool_messages.values()):
+        tool_msg.set_rejected()
+    adapter._current_tool_messages.clear()
+
+    # Keep the token count marked stale whenever interrupted state was captured,
+    # including tool-only turns after assistant text was already flushed.
+    approximate = interrupted_msg is not None
+
+    turn_stats.wall_time_seconds = time.monotonic() - start_time
+    await _report_and_persist_tokens(
+        adapter,
+        agent,
+        config,
+        captured_input_tokens,
+        captured_output_tokens,
+        shield=True,
+        approximate=approximate,
+    )
+
+
+async def _persist_context_tokens(
+    agent: Any,  # noqa: ANN401  # Dynamic agent graph type
+    config: RunnableConfig,
+    tokens: int,
+) -> None:
+    """Best-effort persist of the context token count into graph state.
+
+    Args:
+        agent: The LangGraph agent (must support `aupdate_state`).
+        config: Runnable config with `thread_id`.
+        tokens: Total context tokens to persist.
+    """
+    try:
+        await agent.aupdate_state(config, {"_context_tokens": tokens})
+    except Exception:  # non-critical; stale count on resume is acceptable
+        logger.warning(
+            "Failed to persist _context_tokens=%d; token count may be stale on resume",
+            tokens,
+            exc_info=True,
+        )
+
+
+async def _report_and_persist_tokens(
+    adapter: TextualUIAdapter,
+    agent: Any,  # noqa: ANN401  # Dynamic agent graph type
+    config: RunnableConfig,
+    captured_input_tokens: int,
+    captured_output_tokens: int,
+    *,
+    shield: bool = False,
+    approximate: bool = False,
+) -> None:
+    """Update the token display and best-effort persist to graph state.
+
+    Args:
+        adapter: UI adapter with token callbacks.
+        agent: The LangGraph agent.
+        config: Runnable config with `thread_id` in its configurable dict.
+        captured_input_tokens: Total input tokens captured during the turn.
+        captured_output_tokens: Total output tokens captured during the turn.
+        shield: When `True`, suppress exceptions and `CancelledError` from the
+            persist call so that interrupt handlers can safely await this.
+        approximate: When `True`, signal to the UI that the count is stale
+            (e.g. after an interrupted generation) by appending "+".
+    """
+    if captured_input_tokens or captured_output_tokens:
+        if adapter._on_tokens_update:
+            adapter._on_tokens_update(captured_input_tokens, approximate=approximate)
+        if shield:
+            try:
+                await _persist_context_tokens(agent, config, captured_input_tokens)
+            except (Exception, asyncio.CancelledError):
+                logger.debug(
+                    "Token persist suppressed during interrupt cleanup",
+                    exc_info=True,
+                )
+        else:
+            await _persist_context_tokens(agent, config, captured_input_tokens)
+    elif adapter._on_tokens_show:
+        adapter._on_tokens_show(approximate=approximate)
+
 
 
 async def _flush_assistant_text_ns(
