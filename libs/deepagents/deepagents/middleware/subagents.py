@@ -607,7 +607,19 @@ def _build_task_tool(  # noqa: C901
             value_error_msg = "Tool call ID is required for subagent invocation"
             raise ValueError(value_error_msg)
         subagent, subagent_state = _validate_and_prepare_state(subagent_type, description, runtime)
-        result = subagent.invoke(subagent_state)
+        # Stream SubAgent execution for real-time progress updates.
+        # stream_writer is a no-op when client does not use stream_mode="custom".
+        # Falls back to invoke() for runnables that don't support stream_mode
+        # (e.g., RunnableLambda used as CompiledSubAgent).
+        result = None
+        try:
+            for chunk in subagent.stream(subagent_state, stream_mode="values"):
+                result = chunk
+                runtime.stream_writer({"type": "subagent_progress", "subagent_type": subagent_type})
+        except TypeError:
+            result = None
+        if result is None:
+            result = subagent.invoke(subagent_state)
         return _return_command_with_state_update(result, runtime.tool_call_id)
 
     async def atask(
@@ -622,7 +634,19 @@ def _build_task_tool(  # noqa: C901
             value_error_msg = "Tool call ID is required for subagent invocation"
             raise ValueError(value_error_msg)
         subagent, subagent_state = _validate_and_prepare_state(subagent_type, description, runtime)
-        result = await subagent.ainvoke(subagent_state)
+        # Stream SubAgent execution for real-time progress updates.
+        # stream_writer is a no-op when client does not use stream_mode="custom".
+        # Falls back to ainvoke() for runnables that don't support stream_mode
+        # (e.g., RunnableLambda used as CompiledSubAgent).
+        result = None
+        try:
+            async for chunk in subagent.astream(subagent_state, stream_mode="values"):
+                result = chunk
+                runtime.stream_writer({"type": "subagent_progress", "subagent_type": subagent_type})
+        except TypeError:
+            result = None
+        if result is None:
+            result = await subagent.ainvoke(subagent_state)
         return _return_command_with_state_update(result, runtime.tool_call_id)
 
     return StructuredTool.from_function(

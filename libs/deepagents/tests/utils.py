@@ -1,3 +1,4 @@
+import os
 from typing import ClassVar
 
 from langchain.agents.middleware import AgentMiddleware, AgentState
@@ -22,7 +23,34 @@ def assert_all_deepagent_qualities(agent):
 # Mock tools and middleware
 ###########################
 
-SAMPLE_MODEL = "claude-sonnet-4-20250514"
+
+def _select_sample_models() -> tuple[str, str]:
+    primary = os.getenv("DEEPAGENTS_TEST_MODEL")
+    secondary = os.getenv("DEEPAGENTS_TEST_ALT_MODEL")
+    if primary and secondary:
+        return primary, secondary
+
+    if os.getenv("ANTHROPIC_API_KEY"):
+        primary = primary or "claude-sonnet-4-20250514"
+        secondary = secondary or "claude-3-5-haiku-20241022"
+        return primary, secondary
+
+    if os.getenv("DEEPSEEK_API_KEY"):
+        primary = primary or "openai:deepseek-chat"
+        secondary = secondary or "openai:deepseek-reasoner"
+        return primary, secondary
+
+    if os.getenv("DASHSCOPE_API_KEY") or os.getenv("QWEN_API_KEY"):
+        primary = primary or "openai:qwen-plus"
+        secondary = secondary or "openai:qwen-max"
+        return primary, secondary
+
+    primary = primary or "openai:gpt-4o-mini"
+    secondary = secondary or "openai:gpt-4o"
+    return primary, secondary
+
+
+SAMPLE_MODEL, SAMPLE_MODEL_ALT = _select_sample_models()
 
 
 @tool(description="Use this tool to get premier league standings")
@@ -31,7 +59,7 @@ def get_premier_league_standings(runtime: ToolRuntime):
     return Command(
         update={
             "messages": [ToolMessage(content=long_tool_msg, tool_call_id=runtime.tool_call_id)],
-            "files": {"/test.txt": {"content": ["Goodbye world"], "encoding": "utf-8", "created_at": "2021-01-01", "modified_at": "2021-01-01"}},
+            "files": {"/test.txt": {"content": "Goodbye world", "encoding": "utf-8", "created_at": "2021-01-01", "modified_at": "2021-01-01"}},
             "research": "extra_value",
         }
     )

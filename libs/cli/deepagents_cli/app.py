@@ -656,6 +656,9 @@ class DeepAgentsApp(App):
         copy for the status bar.
         """
 
+        self._context_tokens_approximate: bool = False
+        """Whether the cached token count is approximate/stale."""
+
         self._last_typed_at: float | None = None
         """Typing-aware approval deferral state."""
 
@@ -1624,7 +1627,7 @@ class DeepAgentsApp(App):
         if self._status_bar:
             self._status_bar.set_status_message(message)
 
-    def _update_tokens(self, count: int) -> None:
+    def _update_tokens(self, count: int, *, approximate: bool = False) -> None:
         """Update the token count in the status bar.
 
         Low-level helper — only touches the UI.  Callers that also need to
@@ -1632,24 +1635,30 @@ class DeepAgentsApp(App):
 
         Args:
             count: Total context token count.
+            approximate: Whether to display "+" to indicate the count is stale.
         """
         if self._status_bar:
-            self._status_bar.set_tokens(count)
+            self._status_bar.set_tokens(count, approximate=approximate)
 
-    def _on_tokens_update(self, count: int) -> None:
+    def _on_tokens_update(self, count: int, *, approximate: bool = False) -> None:
         """Update the local cache *and* the status bar.
 
         This is the callback wired to the adapter's `_on_tokens_update`.
 
         Args:
             count: Total context token count to cache and display.
+            approximate: Whether to mark the count as stale.
         """
         self._context_tokens = count
-        self._update_tokens(count)
+        self._context_tokens_approximate = approximate
+        self._update_tokens(count, approximate=approximate)
 
-    def _show_tokens(self) -> None:
+    def _show_tokens(self, *, approximate: bool = False) -> None:
         """Restore the status bar to the cached token value."""
-        self._update_tokens(self._context_tokens)
+        self._update_tokens(
+            self._context_tokens,
+            approximate=approximate or self._context_tokens_approximate,
+        )
 
     def _hide_tokens(self) -> None:
         """Hide the token display during streaming."""
