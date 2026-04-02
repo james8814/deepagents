@@ -14,9 +14,9 @@ when skills have the same name (last one wins). This enables layering: base -> u
 The middleware uses backend APIs exclusively (no direct filesystem access), making it
 portable across different storage backends (filesystem, state, remote storage, etc.).
 
-For StateBackend (ephemeral/in-memory), use a factory function:
+For StateBackend (ephemeral/in-memory):
 ```python
-SkillsMiddleware(backend=lambda rt: StateBackend(rt), ...)
+SkillsMiddleware(backend=StateBackend(), ...)
 ```
 
 ## Skill Structure
@@ -715,8 +715,7 @@ class SkillsMiddleware(AgentMiddleware):
         """Initialize the skills middleware.
 
         Args:
-            backend: Backend instance or factory function that takes runtime and returns a backend.
-                     Use a factory for StateBackend: `lambda rt: StateBackend(rt)`
+            backend: Backend instance (e.g. ``StateBackend()``).
             sources: List of skill source paths (e.g., ["/skills/user/", "/skills/project/"]).
             max_loaded_skills: Maximum number of simultaneously loaded skills. Defaults to 10.
             expose_dynamic_tools: Whether to expose load_skill/unload_skill tools for dynamic skill management. Defaults to False (tools not exposed).

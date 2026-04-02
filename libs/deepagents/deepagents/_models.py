@@ -69,6 +69,10 @@ def check_openrouter_version() -> None:
         raise ImportError(msg)
 
 
+def _openai_base_url() -> str | None:
+    return os.environ.get("OPENAI_BASE_URL") or os.environ.get("OPENAI_API_BASE")
+
+
 def resolve_model(model: str | BaseChatModel) -> BaseChatModel:
     """Resolve a model string to a `BaseChatModel`.
 
@@ -89,7 +93,11 @@ def resolve_model(model: str | BaseChatModel) -> BaseChatModel:
     if isinstance(model, BaseChatModel):
         return model
     if model.startswith("openai:"):
-        return init_chat_model(model, use_responses_api=True)
+        base_url = _openai_base_url()
+        use_responses_api = True
+        if base_url and not base_url.startswith("https://api.openai.com"):
+            use_responses_api = False
+        return init_chat_model(model, use_responses_api=use_responses_api)
     if model.startswith("openrouter:"):
         check_openrouter_version()
         return init_chat_model(model, **_openrouter_attribution_kwargs())

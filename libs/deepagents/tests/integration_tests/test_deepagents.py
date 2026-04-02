@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 from langchain.agents import create_agent
 from langchain.agents.structured_output import ToolStrategy
@@ -7,6 +9,7 @@ from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
 from deepagents.graph import create_deep_agent
+from deepagents.middleware.subagents import SubAgent
 from tests.utils import (
     SAMPLE_MODEL,
     TOY_BASKETBALL_RESEARCH,
@@ -19,17 +22,22 @@ from tests.utils import (
     sample_tool,
 )
 
+pytestmark = pytest.mark.requires("llm")
+
 
 class TestDeepAgents:
     def test_deep_agent_with_subagents(self):
-        subagents = [
-            {
-                "name": "weather_agent",
-                "description": "Use this agent to get the weather",
-                "system_prompt": "You are a weather agent.",
-                "tools": [get_weather],
-                "model": SAMPLE_MODEL,
-            }
+        subagents: list[SubAgent] = [
+            cast(
+                "SubAgent",
+                {
+                    "name": "weather_agent",
+                    "description": "Use this agent to get the weather",
+                    "system_prompt": "You are a weather agent.",
+                    "tools": [get_weather],
+                    "model": SAMPLE_MODEL,
+                },
+            )
         ]
         agent = create_deep_agent(tools=[sample_tool], subagents=subagents)
         assert_all_deepagent_qualities(agent)

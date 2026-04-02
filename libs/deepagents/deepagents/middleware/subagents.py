@@ -447,6 +447,48 @@ def _truncate_text(text: str, max_length: int = 500) -> str:
     return text
 
 
+def _extract_stream_progress(chunk: dict[str, Any], subagent_type: str) -> dict[str, Any]:
+    """Extract progress details from a SubAgent state chunk for real-time streaming.
+
+    Extracts the last message's type, tool name, and a content preview to give
+    clients visibility into what the SubAgent is currently doing. Tool arguments
+    are never exposed (may contain API keys or user data); only LLM-generated
+    output and tool result text are included as truncated previews.
+
+    Args:
+        chunk: SubAgent state snapshot from ``astream(stream_mode="values")``.
+        subagent_type: Name of the SubAgent being executed.
+
+    Returns:
+        Progress dict suitable for ``stream_writer``. Always includes ``type``,
+        ``subagent_type``, and ``message_count``. May also include ``step_type``,
+        ``tool_name``, and ``content_preview``.
+    """
+    progress: dict[str, Any] = {
+        "type": "subagent_progress",
+        "subagent_type": subagent_type,
+    }
+    messages = chunk.get("messages", [])
+    progress["message_count"] = len(messages)
+    if messages:
+        last_msg = messages[-1]
+        if isinstance(last_msg, AIMessage) and last_msg.tool_calls:
+            progress["step_type"] = "tool_call"
+            progress["tool_name"] = last_msg.tool_calls[0].get("name", "")
+            # Tool arguments intentionally excluded — may contain sensitive data
+        elif isinstance(last_msg, ToolMessage):
+            progress["step_type"] = "tool_result"
+            progress["tool_name"] = getattr(last_msg, "name", "")
+            content = last_msg.content if isinstance(last_msg.content, str) else str(last_msg.content)
+            progress["content_preview"] = _truncate_text(content, max_length=300)
+        elif isinstance(last_msg, AIMessage):
+            progress["step_type"] = "thinking"
+            content = last_msg.content if isinstance(last_msg.content, str) else str(last_msg.content)
+            if content:
+                progress["content_preview"] = _truncate_text(content, max_length=300)
+    return progress
+
+
 def _extract_subagent_logs(messages: list) -> list[dict[str, Any]]:
     """Extract tool call and result entries from subagent message history.
 
@@ -607,7 +649,22 @@ def _build_task_tool(  # noqa: C901
             value_error_msg = "Tool call ID is required for subagent invocation"
             raise ValueError(value_error_msg)
         subagent, subagent_state = _validate_and_prepare_state(subagent_type, description, runtime)
-        result = subagent.invoke(subagent_state)
+        # Stream SubAgent execution for real-time progress updates.
+        # stream_writer is a no-op when client does not use stream_mode="custom".
+        # Falls back to invoke() for runnables that don't support stream_mode
+        # (e.g., RunnableLambda used as CompiledSubAgent).
+        result = None
+        try:
+            for chunk in subagent.stream(subagent_state, stream_mode="values"):
+                result = chunk
+                runtime.stream_writer(_extract_stream_progress(chunk, subagent_type))
+        except TypeError as err:
+            if "stream_mode" in str(err) or "unexpected keyword argument" in str(err):
+                result = None
+            else:
+                raise
+        if result is None:
+            result = subagent.invoke(subagent_state)
         return _return_command_with_state_update(result, runtime.tool_call_id)
 
     async def atask(
@@ -622,7 +679,22 @@ def _build_task_tool(  # noqa: C901
             value_error_msg = "Tool call ID is required for subagent invocation"
             raise ValueError(value_error_msg)
         subagent, subagent_state = _validate_and_prepare_state(subagent_type, description, runtime)
-        result = await subagent.ainvoke(subagent_state)
+        # Stream SubAgent execution for real-time progress updates.
+        # stream_writer is a no-op when client does not use stream_mode="custom".
+        # Falls back to ainvoke() for runnables that don't support stream_mode
+        # (e.g., RunnableLambda used as CompiledSubAgent).
+        result = None
+        try:
+            async for chunk in subagent.astream(subagent_state, stream_mode="values"):
+                result = chunk
+                runtime.stream_writer(_extract_stream_progress(chunk, subagent_type))
+        except TypeError as err:
+            if "stream_mode" in str(err) or "unexpected keyword argument" in str(err):
+                result = None
+            else:
+                raise
+        if result is None:
+            result = await subagent.ainvoke(subagent_state)
         return _return_command_with_state_update(result, runtime.tool_call_id)
 
     return StructuredTool.from_function(

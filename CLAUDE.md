@@ -119,20 +119,20 @@ make coverage
 - `LocalShellBackend` - Local shell execution
 - `CompositeBackend` - Routes by path prefix (longest-match wins)
 
-**Backend Factory Pattern**:
+**Backend Instantiation** (v0.5.0+, factory pattern deprecated):
 ```python
-# StateBackend needs runtime context - use factory
-backend = lambda rt: StateBackend(rt)
-# Or direct instance for stateless backends
+# Direct instance — no runtime parameter needed
+backend = StateBackend()
+# Or for filesystem
 backend = FilesystemBackend(root_dir="/workspace")
 ```
 
 **CompositeBackend Routing**:
 ```python
 composite = CompositeBackend(
-    default=StateBackend(runtime),
+    default=StateBackend(),
     routes={
-        "/memories/": StoreBackend(runtime),
+        "/memories/": StoreBackend(),
         "/conversation_history/": fs_backend,
     }
 )
@@ -384,6 +384,14 @@ Scopes: `deepagents`, `sdk`, `deepagents-cli`, `cli`, `harbor`, `acp`, `examples
 **FileData NotRequired** (2026-03-28): `FileData.created_at` and `FileData.modified_at` are now `NotRequired[str]`. External code constructing `FileData` no longer needs to supply these fields. `create_file_data()` still works but internal code prefers direct `FileData()` construction.
 
 **CRLF Normalization** (2026-03-28): `FilesystemBackend.edit()` normalizes `\r\n` and `\r` to `\n` in both `old_string` and `new_string` before matching.
+
+**Backend Factory Deprecation** (2026-04-02): `StateBackend(runtime)` factory pattern is deprecated. Use `StateBackend()` directly — runtime is now injected internally by middleware. The `backend` parameter on `create_deep_agent` accepts instances only, not callables.
+
+**OpenAI-Compatible Model Resolution** (2026-04-02): `resolve_model()` in `_models.py` auto-disables Responses API when `OPENAI_BASE_URL` points to non-OpenAI endpoints (DeepSeek, Qwen, etc.).
+
+**Token Persistence** (2026-04-02): CLI persists token count in graph state across sessions via `token_state.py`. Token display shows "+" suffix for approximate/interrupted counts.
+
+**http_request Tool Removed** (2026-04-02): The `http_request` tool has been removed from the CLI agent.
 
 **Message ID Requirement**: All messages must have IDs for proper state management (see `_ensure_message_ids` in summarization).
 

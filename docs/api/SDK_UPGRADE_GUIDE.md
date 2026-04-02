@@ -240,3 +240,37 @@ def _format_skill_annotations(...) -> str
 - [ ] 确认自定义 `FileData` 构造代码在缺少 `created_at`/`modified_at` 时仍正常
 - [ ] 如有自定义 middleware 覆写 `wrap_model_call`，检查返回类型兼容性
 - [ ] 如严格锁定 `langchain-*` 版本，做依赖求解验证
+
+---
+
+## Round 10 变更摘要 (2026-04-02)
+
+### ⚠️ Backend Factory 废弃（行为变更）
+
+`StateBackend(runtime)` factory callable 模式已废弃。直接使用 `StateBackend()`，runtime 由 middleware 内部注入。
+
+```python
+# 旧方式（已废弃，会打印 DeprecationWarning）
+backend = lambda rt: StateBackend(rt)
+create_deep_agent(model=model, backend=backend)
+
+# 新方式
+backend = StateBackend()
+create_deep_agent(model=model, backend=backend)
+```
+
+### 其他变更
+
+- **recursion_limit**: 10001 → 9999
+- **deprecated protocol methods**: `ls_info()`/`glob_info()`/`grep_raw()` 返回类型恢复为原始类型（`list[FileInfo]`等），降低自定义 backend 升级摩擦
+- **State backend offloading**: `_offload_to_backend` 返回 `tuple[str|None, dict|None]`，支持 `files_update` 传递
+- **async sub-agents**: 修复 TypeError，移除 `from __future__ import annotations`
+- **OpenAI-compatible**: `resolve_model()` 自动禁用非 OpenAI 端点的 Responses API
+- **http_request tool**: 已从 CLI agent 中移除
+- **pygments**: 升级到 2.20.0（安全修复 GHSA-5239-wwwm-4pmq）
+
+### 迁移检查清单
+
+- [ ] 将 `StateBackend(runtime)` / `lambda rt: StateBackend(rt)` 改为 `StateBackend()`
+- [ ] 如使用 `_offload_to_backend` 返回值，适配新的 tuple 返回类型
+- [ ] 如有调用 `http_request` 工具的代码，需移除相关引用

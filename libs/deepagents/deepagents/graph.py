@@ -197,7 +197,7 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
         store: Optional store for persistent storage (required if backend uses `StoreBackend`).
         backend: Optional backend for file storage and execution.
 
-            Pass either a `Backend` instance or a callable factory like `lambda rt: StateBackend(rt)`.
+            Pass a `Backend` instance (e.g. `StateBackend()`).
             For execution support, use a backend that implements `SandboxBackendProtocol`.
         interrupt_on: Mapping of tool names to interrupt configs.
 
@@ -212,7 +212,7 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
         A configured deep agent.
     """
     model = get_default_model() if model is None else resolve_model(model)
-    backend = backend if backend is not None else (StateBackend)
+    backend = backend if backend is not None else StateBackend()
 
     # Build general-purpose subagent with default middleware stack
     gp_middleware: list[AgentMiddleware[Any, Any, Any]] = [
@@ -361,7 +361,7 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
         cache=cache,
     ).with_config(
         {
-            "recursion_limit": 10_001,
+            "recursion_limit": 9_999,
             "metadata": {
                 "ls_integration": "deepagents",
                 "versions": {"deepagents": __version__},

@@ -795,6 +795,9 @@ class Settings:
     model_provider: str | None = None  # Provider name (see PROVIDER_API_KEY_ENV)
     model_context_limit: int | None = None  # Max input tokens from model profile
 
+    model_unsupported_modalities: frozenset[str] = frozenset()
+    """Input modalities not indicated as supported by the model profile."""
+
     # Project information
     project_root: Path | None = None
 
@@ -1987,12 +1990,15 @@ class ModelResult:
         model_name: Resolved model name.
         provider: Resolved provider name.
         context_limit: Max input tokens from the model profile, or `None`.
+        unsupported_modalities: Input modalities not indicated as supported by
+            the model profile (e.g. `{"audio", "video"}`).
     """
 
     model: BaseChatModel
     model_name: str
     provider: str
     context_limit: int | None = None
+    unsupported_modalities: frozenset[str] = frozenset()
 
     def apply_to_settings(self) -> None:
         """Commit this result's metadata to global `settings`."""
@@ -2000,6 +2006,7 @@ class ModelResult:
         s.model_name = self.model_name
         s.model_provider = self.provider
         s.model_context_limit = self.context_limit
+        s.model_unsupported_modalities = self.unsupported_modalities
 
 
 def _apply_profile_overrides(
@@ -2163,17 +2170,30 @@ def create_model(
             raise_on_failure=True,
         )
 
-    # Extract context limit from model profile (if available)
+    # Extract context limit and modality support from model profile
     context_limit: int | None = None
+    unsupported_modalities: frozenset[str] = frozenset()
     profile = getattr(model, "profile", None)
-    if isinstance(profile, dict) and isinstance(profile.get("max_input_tokens"), int):
-        context_limit = profile["max_input_tokens"]
+    if isinstance(profile, dict):
+        if isinstance(profile.get("max_input_tokens"), int):
+            context_limit = profile["max_input_tokens"]
+
+        modality_keys = {
+            "image_inputs": "image",
+            "audio_inputs": "audio",
+            "video_inputs": "video",
+            "pdf_inputs": "pdf",
+        }
+        unsupported_modalities = frozenset(
+            label for key, label in modality_keys.items() if profile.get(key) is False
+        )
 
     return ModelResult(
         model=model,
         model_name=model_name,
         provider=resolved_provider,
         context_limit=context_limit,
+        unsupported_modalities=unsupported_modalities,
     )
 
 
