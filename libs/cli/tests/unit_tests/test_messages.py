@@ -14,13 +14,13 @@ from deepagents_cli.widgets.messages import (
     DiffMessage,
     ErrorMessage,
     QueuedUserMessage,
+    SkillMessage,
     SummarizationMessage,
     ToolCallMessage,
     UserMessage,
     _show_timestamp_toast,
     _strip_frontmatter,
     _strip_success_exit_line,
-
 )
 
 # Content that previously caused MarkupError crashes

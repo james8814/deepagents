@@ -47,8 +47,8 @@ class TestHelpScreenExamples:
     def test_list_help_has_examples(self) -> None:
         text = self._render(show_list_help)
         assert "Examples:" in text
-        assert "deepagents list" in text
-        assert "deepagents list --json" in text
+        assert "deepagents agents list" in text
+        assert "deepagents agents list --json" in text
 
     def test_skills_list_help_has_examples(self) -> None:
         text = self._render(show_skills_list_help)

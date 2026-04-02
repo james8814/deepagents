@@ -1,44 +1,41 @@
 {
   "categories": [
+    "external_benchmarks",
     "file_operations",
-    "skills",
+    "followup_quality",
     "hitl",
     "memory",
-    "summarization",
+    "memory_agent_bench",
+    "retrieval",
+    "skills",
     "subagents",
+    "summarization",
     "system_prompt",
-    "tool_usage",
-    "followup_quality",
-    "external_benchmarks",
     "tau2_airline",
-    "memory_agent_bench"
+    "tool_usage",
+    "tool_use"
   ],
   "radar_categories": [
     "file_operations",
-    "skills",
-    "hitl",
+    "retrieval",
+    "tool_use",
     "memory",
-    "summarization",
-    "subagents",
-    "system_prompt",
-    "tool_usage",
-    "followup_quality",
-    "external_benchmarks",
-    "tau2_airline",
-    "memory_agent_bench"
+    "summarization"
   ],
   "labels": {
+    "external_benchmarks": "External Benchmarks",
     "file_operations": "File Ops",
-    "skills": "Skills",
+    "followup_quality": "Follow-up Quality",
     "hitl": "HITL",
     "memory": "Memory",
-    "summarization": "Summarization",
+    "memory_agent_bench": "Memory Agent Bench",
+    "retrieval": "Retrieval",
+    "skills": "Skills",
     "subagents": "Sub-Agents",
+    "summarization": "Summarization",
     "system_prompt": "System Prompt",
-    "tool_usage": "Tool Usage",
-    "followup_quality": "Follow-up Quality",
-    "external_benchmarks": "External Benchmarks",
     "tau2_airline": "Tau2 Airline",
-    "memory_agent_bench": "Memory Agent Bench"
+    "tool_usage": "Tool Usage",
+    "tool_use": "Tool Use"
   }
 }

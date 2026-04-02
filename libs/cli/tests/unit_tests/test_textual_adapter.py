@@ -16,7 +16,7 @@ from langgraph.types import Command
 from pydantic import ValidationError
 from rich.console import Console
 
-from deepagents_cli import textual_adapter
+from deepagents_cli import config as config_module
 from deepagents_cli.config import build_stream_config
 from deepagents_cli.textual_adapter import (
     ModelStats,
@@ -100,13 +100,13 @@ class TestTextualUIAdapterInit:
             request_approval=_mock_approval,
         )
 
-        def update_cb(count: int) -> None:
+        def update_cb(count: int, *, approximate: bool = False) -> None:
             pass
 
         def hide_cb() -> None:
             pass
 
-        def show_cb() -> None:
+        def show_cb(*, approximate: bool = False) -> None:
             pass
 
         adapter._on_tokens_update = update_cb
@@ -206,9 +206,7 @@ class TestBuildStreamConfig:
 
     def setup_method(self) -> None:
         """Clear the git-branch cache between tests."""
-        from deepagents_cli import config
-
-        config._git_branch_cache.clear()
+        config_module._git_branch_cache.clear()
 
     def test_assistant_fields_present(self) -> None:
         """Assistant-specific metadata should be present when `assistant_id` is set."""
@@ -336,9 +334,7 @@ class TestGetGitBranch:
 
     def setup_method(self) -> None:
         """Clear the git-branch cache between tests."""
-        from deepagents_cli import config
-
-        config._git_branch_cache.clear()
+        config_module._git_branch_cache.clear()
 
     def test_reuses_cached_branch_for_same_working_directory(self) -> None:
         """Repeated lookups in one repo should only spawn `git` once."""
@@ -351,10 +347,8 @@ class TestGetGitBranch:
             ),
             patch("subprocess.run", return_value=result) as mock_run,
         ):
-            from deepagents_cli import config
-
-            assert config._get_git_branch() == "feature-branch"
-            assert config._get_git_branch() == "feature-branch"
+            assert config_module._get_git_branch() == "feature-branch"
+            assert config_module._get_git_branch() == "feature-branch"
 
         assert mock_run.call_count == 1
 
@@ -364,9 +358,7 @@ class TestGetGitBranchOSError:
 
     def setup_method(self) -> None:
         """Clear the git-branch cache between tests."""
-        from deepagents_cli import config
-
-        config._git_branch_cache.clear()
+        config_module._git_branch_cache.clear()
 
     def test_returns_none_on_cwd_oserror(self) -> None:
         """_get_git_branch should return None when cwd is inaccessible."""
@@ -374,9 +366,7 @@ class TestGetGitBranchOSError:
             "deepagents_cli.config.Path.cwd",
             side_effect=OSError("deleted"),
         ):
-            from deepagents_cli import config
-
-            assert config._get_git_branch() is None
+            assert config_module._get_git_branch() is None
 
 
 class TestBuildStreamConfigOSError:
@@ -384,9 +374,7 @@ class TestBuildStreamConfigOSError:
 
     def setup_method(self) -> None:
         """Clear the git-branch cache between tests."""
-        from deepagents_cli import config
-
-        config._git_branch_cache.clear()
+        config_module._git_branch_cache.clear()
 
     def test_cwd_absent_on_oserror(self) -> None:
         """Cwd should be absent from metadata when Path.cwd() raises."""
@@ -1301,9 +1289,7 @@ class TestPrintUsageTable:
         stats.record_request("gpt-4", 100, 50)
         stats.record_request("claude-opus-4-6", 200, 80)
         buf = StringIO()
-        console = Console(
-            file=buf, force_terminal=True, width=120
-        )  # Set wider width to avoid truncation
+        console = Console(file=buf, force_terminal=True)
         print_usage_table(stats, wall_time=2.0, console=console)
         output = buf.getvalue()
         assert "gpt-4" in output
