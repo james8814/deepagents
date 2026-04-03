@@ -1,18 +1,14 @@
-#!/usr/bin/env python3
 """Middleware for providing subagents to an agent via a `task` tool."""
 
-import logging
-import os
-import warnings
 from collections.abc import Awaitable, Callable, Sequence
-from typing import Any, NotRequired, TypedDict, Unpack, cast
+from typing import Any, NotRequired, TypedDict, cast
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import HumanInTheLoopMiddleware, InterruptOnConfig
 from langchain.agents.middleware.types import AgentMiddleware, ContextT, ModelRequest, ModelResponse, ResponseT
 from langchain.tools import BaseTool, ToolRuntime
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 from langchain_core.runnables import Runnable
 from langchain_core.tools import StructuredTool
 from langgraph.types import Command
@@ -20,8 +16,6 @@ from pydantic import BaseModel, Field
 
 from deepagents.backends.protocol import BackendFactory, BackendProtocol
 from deepagents.middleware._utils import append_to_system_message
-
-logger = logging.getLogger(__name__)
 
 
 class SubAgent(TypedDict):
@@ -132,46 +126,10 @@ DEFAULT_SUBAGENT_PROMPT = "In order to complete the objective that the user asks
 #    be explicitly filtered from runtime.state when invoking a subagent to prevent parent state
 #    from leaking to child agents (e.g., the general-purpose subagent loads its own skills via
 #    SkillsMiddleware).
-# 4. The subagent_logs key is excluded when passing parent state to subagents to prevent
-#    log pollution from parent agents affecting child agents (each tracks its own logs).
-# 5. All PrivateStateAttr fields are per-agent state managed by their respective middleware.
-#    Each subagent maintains its own instance independently. Without exclusion, parallel
-#    subagents returning the same key cause InvalidUpdateError (no reducer defined, two
-#    writes to same key in one step).
-#    - skills_loaded, skill_resources: SkillsMiddleware (each subagent loads its own skills)
-#    - _summarization_event: SummarizationMiddleware (each subagent tracks its own context)
 _EXCLUDED_STATE_KEYS = {
-    "messages",
-    "todos",
-    "structured_response",
-    "skills_metadata",
-    "memory_contents",
-    "subagent_logs",
-    "skills_loaded",
-    "skill_resources",
-    "_summarization_event",
-}
-
-# Feature flag: enable SubAgent execution logging via environment variable
-# Set DEEPAGENTS_SUBAGENT_LOGGING=1 to capture tool calls and results for display/debugging
-_ENABLE_SUBAGENT_LOGGING = os.getenv("DEEPAGENTS_SUBAGENT_LOGGING", "").strip() == "1"
-logger.info("[subagents] DEEPAGENTS_SUBAGENT_LOGGING=%s", _ENABLE_SUBAGENT_LOGGING)
-
-_ENABLE_SUBAGENT_STREAM_DIAGNOSTICS = os.getenv("DEEPAGENTS_SUBAGENT_STREAM_DIAGNOSTICS", "").strip() == "1"
-logger.info("[subagents] DEEPAGENTS_SUBAGENT_STREAM_DIAGNOSTICS=%s", _ENABLE_SUBAGENT_STREAM_DIAGNOSTICS)
-
-# Sensitive keys to redact in logs (values replaced with "***")
-_SENSITIVE_KEYS = {
-    "token",
-    "secret",
-    "password",
-    "api_key",
-    "authorization",
-    "private_key",
-    "credentials",
-    "access_token",
-    "refresh_token",
-    "jwt",
+    "messages", "todos", "structured_response",
+    "skills_metadata", "memory_contents", "subagent_logs",
+    "skills_loaded", "skill_resources", "_summarization_event",
 }
 
 
@@ -344,248 +302,11 @@ class _SubagentSpec(TypedDict):
     runnable: Runnable
 
 
-def _get_subagents_legacy(
-    *,
-    default_model: str | BaseChatModel,
-    default_tools: Sequence[BaseTool | Callable | dict[str, Any]],
-    default_middleware: list[AgentMiddleware] | None,
-    default_interrupt_on: dict[str, bool | InterruptOnConfig] | None,
-    subagents: Sequence[SubAgent | CompiledSubAgent],
-    general_purpose_agent: bool,
-) -> list[_SubagentSpec]:
-    """Create subagent instances from specifications.
-
-    Args:
-        default_model: Default model for subagents that don't specify one.
-        default_tools: Default tools for subagents that don't specify tools.
-        default_middleware: Middleware to apply to all subagents. If `None`,
-            no default middleware is applied.
-        default_interrupt_on: The tool configs to use for the default general-purpose subagent. These
-            are also the fallback for any subagents that don't specify their own tool configs.
-        subagents: List of agent specifications or pre-compiled agents.
-        general_purpose_agent: Whether to include a general-purpose subagent.
-
-    Returns:
-        List of subagent specs containing name, description, and runnable.
-    """
-    # Use empty list if None (no default middleware)
-    default_subagent_middleware = default_middleware or []
-
-    specs: list[_SubagentSpec] = []
-
-    # Create general-purpose agent if enabled
-    if general_purpose_agent:
-        general_purpose_middleware = [*default_subagent_middleware]
-        if default_interrupt_on:
-            general_purpose_middleware.append(HumanInTheLoopMiddleware(interrupt_on=default_interrupt_on))
-        general_purpose_subagent = create_agent(
-            default_model,
-            system_prompt=DEFAULT_SUBAGENT_PROMPT,
-            tools=default_tools,
-            middleware=general_purpose_middleware,
-            name="general-purpose",
-        )
-        specs.append(
-            {
-                "name": "general-purpose",
-                "description": DEFAULT_GENERAL_PURPOSE_DESCRIPTION,
-                "runnable": general_purpose_subagent,
-            }
-        )
-
-    # Process custom subagents
-    for agent_ in subagents:
-        if "runnable" in agent_:
-            custom_agent = cast("CompiledSubAgent", agent_)
-            specs.append(
-                {
-                    "name": custom_agent["name"],
-                    "description": custom_agent["description"],
-                    "runnable": custom_agent["runnable"],
-                }
-            )
-            continue
-        _tools = agent_.get("tools", list(default_tools))
-
-        subagent_model = agent_.get("model", default_model)
-
-        _middleware = [*default_subagent_middleware, *agent_["middleware"]] if "middleware" in agent_ else [*default_subagent_middleware]
-
-        interrupt_on = agent_.get("interrupt_on", default_interrupt_on)
-        if interrupt_on:
-            _middleware.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
-
-        specs.append(
-            {
-                "name": agent_["name"],
-                "description": agent_["description"],
-                "runnable": create_agent(
-                    subagent_model,
-                    system_prompt=agent_["system_prompt"],
-                    tools=_tools,
-                    middleware=_middleware,
-                    name=agent_["name"],
-                ),
-            }
-        )
-
-    return specs
-
-
-def _redact_sensitive_fields(data: object) -> object:
-    """Recursively redact sensitive fields in nested data structures.
-
-    Replaces values of sensitive keys (like password, api_key, token, etc.)
-    with "***" to prevent credential leakage in logs.
-
-    Args:
-        data: A Python object (dict, list, primitive, etc.).
-
-    Returns:
-        The data with sensitive values replaced.
-    """
-    if isinstance(data, dict):
-        return {k: "***" if isinstance(k, str) and k.lower() in _SENSITIVE_KEYS else _redact_sensitive_fields(v) for k, v in data.items()}
-    if isinstance(data, list):
-        return [_redact_sensitive_fields(item) for item in data]
-    return data
-
-
-def _truncate_text(text: str, max_length: int = 500) -> str:
-    """Truncate long text output for logging.
-
-    Args:
-        text: The text to potentially truncate.
-        max_length: Maximum length before truncation. Defaults to 500 chars.
-
-    Returns:
-        The original text if <= max_length, otherwise truncated with indicator.
-    """
-    if isinstance(text, str) and len(text) > max_length:
-        return text[:max_length] + f"... [output truncated, {len(text)} chars total]"
-    return text
-
-
-def _extract_stream_progress(chunk: dict[str, Any], subagent_type: str) -> dict[str, Any]:
-    """Extract progress details from a SubAgent state chunk for real-time streaming.
-
-    Extracts the last message's type, tool name, and a content preview to give
-    clients visibility into what the SubAgent is currently doing. Tool arguments
-    are never exposed (may contain API keys or user data); only LLM-generated
-    output and tool result text are included as truncated previews.
-
-    Args:
-        chunk: SubAgent state snapshot from ``astream(stream_mode="values")``.
-        subagent_type: Name of the SubAgent being executed.
-
-    Returns:
-        Progress dict suitable for ``stream_writer``. Always includes ``type``,
-        ``subagent_type``, and ``message_count``. May also include ``step_type``,
-        ``tool_name``, and ``content_preview``.
-    """
-    progress: dict[str, Any] = {
-        "type": "subagent_progress",
-        "subagent_type": subagent_type,
-    }
-    messages = chunk.get("messages", [])
-    progress["message_count"] = len(messages)
-    if messages:
-        last_msg = messages[-1]
-        if isinstance(last_msg, AIMessage) and last_msg.tool_calls:
-            progress["step_type"] = "tool_call"
-            progress["tool_name"] = last_msg.tool_calls[0].get("name", "")
-            # Tool arguments intentionally excluded — may contain sensitive data
-        elif isinstance(last_msg, ToolMessage):
-            progress["step_type"] = "tool_result"
-            progress["tool_name"] = getattr(last_msg, "name", "")
-            content = last_msg.content if isinstance(last_msg.content, str) else str(last_msg.content)
-            progress["content_preview"] = _truncate_text(content, max_length=300)
-        elif isinstance(last_msg, AIMessage):
-            progress["step_type"] = "thinking"
-            content = last_msg.content if isinstance(last_msg.content, str) else str(last_msg.content)
-            if content:
-                progress["content_preview"] = _truncate_text(content, max_length=300)
-    return progress
-
-
-def _extract_subagent_logs(messages: list) -> list[dict[str, Any]]:
-    """Extract tool call and result entries from subagent message history.
-
-    This function processes the subagent's message history and extracts paired
-    tool calls and their results, with automatic redaction of sensitive fields
-    and truncation of large outputs.
-
-    Args:
-        messages: List of langchain messages from subagent execution.
-
-    Returns:
-        List of log entries, each containing:
-        - For tool calls: {type: "tool_call", tool_name, tool_input, tool_call_id}
-        - For results: {type: "tool_result", tool_call_id, tool_output, status}
-    """
-    entries: list[dict[str, Any]] = []
-
-    # Process all messages except the last (which is typically the final summary)
-    for msg in messages[:-1]:
-        # Extract tool calls from AIMessage
-        if isinstance(msg, AIMessage) and msg.tool_calls:
-            for call in msg.tool_calls:
-                tool_call_id = call.get("id")
-                # Debug: log all keys in the tool_call object
-                logger.info(
-                    "[subagents] tool_call keys: %s, full call: %s",
-                    list(call.keys()),
-                    call,
-                )
-                # Use multiple fallbacks for tool name extraction
-                tool_name = call.get("name") or call.get("tool_name") or call.get("tool") or "unknown"
-                logger.info("[subagents] tool_name extracted: %s", tool_name)
-                entries.append(
-                    {
-                        "type": "tool_call",
-                        "tool_name": tool_name,
-                        "tool_input": _redact_sensitive_fields(call.get("args", {})),
-                        "tool_call_id": tool_call_id,
-                    }
-                )
-        # Extract tool results from ToolMessage
-        elif isinstance(msg, ToolMessage):
-            # Truncate long outputs to prevent state bloat
-            truncated_output = _truncate_text(msg.content) if isinstance(msg.content, str) else str(msg.content)
-            # Debug: log all attributes of ToolMessage to find the correct attribute for tool_name
-            logger.info(
-                "[subagents] ToolMessage attributes: tool_call_id=%s, content_type=%s, dir=%s",
-                msg.tool_call_id,
-                type(msg.content).__name__,
-                [attr for attr in dir(msg) if not attr.startswith("_")],
-            )
-            # Extract tool_name from the message (LangChain stores it in msg.name)
-            tool_name = getattr(msg, "name", None) or getattr(msg, "tool_name", None) or "unknown"
-            logger.info(
-                "[subagents] tool_result: tool_call_id=%s, tool_name=%s",
-                msg.tool_call_id,
-                tool_name,
-            )
-            entries.append(
-                {
-                    "type": "tool_result",
-                    "tool_call_id": msg.tool_call_id,
-                    "tool_output": truncated_output,
-                    "tool_name": tool_name,
-                    "status": "success",
-                }
-            )
-
-    return entries
-
-
 def _build_task_tool(  # noqa: C901
     subagents: list[_SubagentSpec],
     task_description: str | None = None,
 ) -> BaseTool:
     """Create a task tool from pre-built subagent graphs.
-
-    This is the shared implementation used by both the legacy API and new API.
 
     Args:
         subagents: List of subagent specs containing name, description, and runnable.
@@ -618,27 +339,6 @@ def _build_task_tool(  # noqa: C901
             raise ValueError(error_msg)
 
         state_update = {k: v for k, v in result.items() if k not in _EXCLUDED_STATE_KEYS}
-
-        # Extract and capture SubAgent execution logs if feature is enabled
-        if _ENABLE_SUBAGENT_LOGGING:
-            messages = result.get("messages", [])
-            logger.info(
-                "[subagents] _return_command: %d messages in subagent result",
-                len(messages),
-            )
-            log_entries = _extract_subagent_logs(messages)
-            logger.info(
-                "[subagents] _extract_subagent_logs returned %d entries",
-                len(log_entries),
-            )
-            if log_entries:
-                state_update["subagent_logs"] = {tool_call_id: log_entries}
-                logger.info(
-                    "[subagents] Added %d log entries to state_update for tool_call_id=%s",
-                    len(log_entries),
-                    tool_call_id,
-                )
-
         # Strip trailing whitespace to prevent API errors with Anthropic
         message_text = result["messages"][-1].text.rstrip() if result["messages"][-1].text else ""
         return Command(
@@ -668,22 +368,7 @@ def _build_task_tool(  # noqa: C901
             value_error_msg = "Tool call ID is required for subagent invocation"
             raise ValueError(value_error_msg)
         subagent, subagent_state = _validate_and_prepare_state(subagent_type, description, runtime)
-        # Stream SubAgent execution for real-time progress updates.
-        # stream_writer is a no-op when client does not use stream_mode="custom".
-        # Falls back to invoke() for runnables that don't support stream_mode
-        # (e.g., RunnableLambda used as CompiledSubAgent).
-        result = None
-        try:
-            for chunk in subagent.stream(subagent_state, stream_mode="values"):
-                result = chunk
-                runtime.stream_writer(_extract_stream_progress(chunk, subagent_type))
-        except TypeError as err:
-            if "stream_mode" in str(err) or "unexpected keyword argument" in str(err):
-                result = None
-            else:
-                raise
-        if result is None:
-            result = subagent.invoke(subagent_state)
+        result = subagent.invoke(subagent_state)
         return _return_command_with_state_update(result, runtime.tool_call_id)
 
     async def atask(
@@ -698,45 +383,7 @@ def _build_task_tool(  # noqa: C901
             value_error_msg = "Tool call ID is required for subagent invocation"
             raise ValueError(value_error_msg)
         subagent, subagent_state = _validate_and_prepare_state(subagent_type, description, runtime)
-        # Stream SubAgent execution for real-time progress updates.
-        # stream_writer is a no-op when client does not use stream_mode="custom".
-        # Falls back to ainvoke() for runnables that don't support stream_mode
-        # (e.g., RunnableLambda used as CompiledSubAgent).
-        result = None
-        chunk_count = 0
-        stream_writer_count = 0
-        try:
-            async for chunk in subagent.astream(subagent_state, stream_mode="values"):
-                chunk_count += 1
-                result = chunk
-                runtime.stream_writer(_extract_stream_progress(chunk, subagent_type))
-                stream_writer_count += 1
-        except TypeError as err:
-            if "stream_mode" in str(err) or "unexpected keyword argument" in str(err):
-                if _ENABLE_SUBAGENT_STREAM_DIAGNOSTICS:
-                    logger.warning(
-                        "[DIAG] astream fallback triggered: %s | subagent=%s | runnable_type=%s | chunk_count=%d | stream_writer_count=%d",
-                        str(err),
-                        subagent_type,
-                        type(subagent).__name__,
-                        chunk_count,
-                        stream_writer_count,
-                    )
-                result = None
-            else:
-                raise
-        finally:
-            if _ENABLE_SUBAGENT_STREAM_DIAGNOSTICS:
-                logger.debug(
-                    "[DIAG] atask complete | subagent=%s | runnable_type=%s | chunk_count=%d | stream_writer_count=%d | had_result=%s",
-                    subagent_type,
-                    type(subagent).__name__,
-                    chunk_count,
-                    stream_writer_count,
-                    result is not None,
-                )
-        if result is None:
-            result = await subagent.ainvoke(subagent_state)
+        result = await subagent.ainvoke(subagent_state)
         return _return_command_with_state_update(result, runtime.tool_call_id)
 
     return StructuredTool.from_function(
@@ -747,14 +394,6 @@ def _build_task_tool(  # noqa: C901
         infer_schema=False,
         args_schema=TaskToolSchema,
     )
-
-
-class _DeprecatedKwargs(TypedDict, total=False):
-    """TypedDict for deprecated SubAgentMiddleware keyword arguments.
-
-    These arguments are deprecated and will be removed in version 0.5.0.
-    Use `backend` and fully-specified `subagents` instead.
-    """
 
 
 class SubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
@@ -771,7 +410,7 @@ class SubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
     subset of tools and focus.
 
     Args:
-        backend: Backend for file operations and execution. Required for the new API.
+        backend: Backend for file operations and execution.
         subagents: List of fully-specified subagent configs. Each SubAgent
             must specify `model` and `tools`. Optional `interrupt_on` on
             individual subagents is respected.
@@ -803,87 +442,25 @@ class SubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
         )
         ```
 
-    .. deprecated::
-        The following arguments are deprecated and will be removed in version 0.5.0:
-        `default_model`, `default_tools`, `default_middleware`,
-        `default_interrupt_on`, `general_purpose_agent`. Use `backend` and `subagents` instead.
     """
-
-    # Valid deprecated kwarg names for runtime validation
-    _VALID_DEPRECATED_KWARGS = frozenset(
-        {
-            "default_model",
-            "default_tools",
-            "default_middleware",
-            "default_interrupt_on",
-            "general_purpose_agent",
-        }
-    )
 
     def __init__(
         self,
         *,
-        backend: BackendProtocol | BackendFactory | None = None,
-        subagents: Sequence[SubAgent | CompiledSubAgent] | None = None,
+        backend: BackendProtocol | BackendFactory,
+        subagents: Sequence[SubAgent | CompiledSubAgent],
         system_prompt: str | None = TASK_SYSTEM_PROMPT,
         task_description: str | None = None,
-        **deprecated_kwargs: Unpack[_DeprecatedKwargs],
     ) -> None:
         """Initialize the `SubAgentMiddleware`."""
         super().__init__()
 
-        # Validate that only known deprecated kwargs are passed
-        unknown_kwargs = set(deprecated_kwargs.keys()) - self._VALID_DEPRECATED_KWARGS
-        if unknown_kwargs:
-            msg = f"SubAgentMiddleware got unexpected keyword argument(s): {', '.join(sorted(unknown_kwargs))}"
-            raise TypeError(msg)
-
-        # Handle deprecated kwargs for backward compatibility
-        default_model = deprecated_kwargs.get("default_model")
-        default_tools = deprecated_kwargs.get("default_tools")
-        default_middleware = deprecated_kwargs.get("default_middleware")
-        default_interrupt_on = deprecated_kwargs.get("default_interrupt_on")
-        # general_purpose_agent defaults to True if not specified
-        general_purpose_agent = deprecated_kwargs.get("general_purpose_agent", True)
-
-        # Warn about any deprecated kwargs that were provided
-        provided_deprecated = [key for key in deprecated_kwargs if key != "general_purpose_agent"]
-        if "general_purpose_agent" in deprecated_kwargs and not general_purpose_agent:
-            provided_deprecated.append("general_purpose_agent")
-
-        if provided_deprecated:
-            warnings.warn(
-                f"The following SubAgentMiddleware arguments are deprecated and will be removed "
-                f"in version 0.5.0: {', '.join(provided_deprecated)}. "
-                f"Use `backend` and fully-specified `subagents` instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
-        # Detect which API is being used
-        using_new_api = backend is not None
-        using_old_api = default_model is not None
-
-        if using_old_api and not using_new_api:
-            # Legacy API - build subagents from deprecated args
-            subagent_specs = _get_subagents_legacy(
-                default_model=default_model,  # ty: ignore[invalid-argument-type]
-                default_tools=default_tools or [],
-                default_middleware=default_middleware,
-                default_interrupt_on=default_interrupt_on,
-                subagents=subagents or [],
-                general_purpose_agent=general_purpose_agent,
-            )
-        elif using_new_api:
-            if not subagents:
-                msg = "At least one subagent must be specified when using the new API"
-                raise ValueError(msg)
-            self._backend = backend
-            self._subagents = subagents
-            subagent_specs = self._get_subagents()
-        else:
-            msg = "SubAgentMiddleware requires either `backend` (new API) or `default_model` (deprecated API)"
+        if not subagents:
+            msg = "At least one subagent must be specified"
             raise ValueError(msg)
+        self._backend = backend
+        self._subagents = subagents
+        subagent_specs = self._get_subagents()
 
         task_tool = _build_task_tool(subagent_specs, task_description)
 
