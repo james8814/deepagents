@@ -141,6 +141,9 @@ _EXCLUDED_STATE_KEYS = {"messages", "todos", "structured_response", "skills_meta
 _ENABLE_SUBAGENT_LOGGING = os.getenv("DEEPAGENTS_SUBAGENT_LOGGING", "").strip() == "1"
 logger.info("[subagents] DEEPAGENTS_SUBAGENT_LOGGING=%s", _ENABLE_SUBAGENT_LOGGING)
 
+_ENABLE_SUBAGENT_STREAM_DIAGNOSTICS = os.getenv("DEEPAGENTS_SUBAGENT_STREAM_DIAGNOSTICS", "").strip() == "1"
+logger.info("[subagents] DEEPAGENTS_SUBAGENT_STREAM_DIAGNOSTICS=%s", _ENABLE_SUBAGENT_STREAM_DIAGNOSTICS)
+
 # Sensitive keys to redact in logs (values replaced with "***")
 _SENSITIVE_KEYS = {
     "token",
@@ -684,15 +687,38 @@ def _build_task_tool(  # noqa: C901
         # Falls back to ainvoke() for runnables that don't support stream_mode
         # (e.g., RunnableLambda used as CompiledSubAgent).
         result = None
+        chunk_count = 0
+        stream_writer_count = 0
         try:
             async for chunk in subagent.astream(subagent_state, stream_mode="values"):
+                chunk_count += 1
                 result = chunk
                 runtime.stream_writer(_extract_stream_progress(chunk, subagent_type))
+                stream_writer_count += 1
         except TypeError as err:
             if "stream_mode" in str(err) or "unexpected keyword argument" in str(err):
+                if _ENABLE_SUBAGENT_STREAM_DIAGNOSTICS:
+                    logger.warning(
+                        "[DIAG] astream fallback triggered: %s | subagent=%s | runnable_type=%s | chunk_count=%d | stream_writer_count=%d",
+                        str(err),
+                        subagent_type,
+                        type(subagent).__name__,
+                        chunk_count,
+                        stream_writer_count,
+                    )
                 result = None
             else:
                 raise
+        finally:
+            if _ENABLE_SUBAGENT_STREAM_DIAGNOSTICS:
+                logger.debug(
+                    "[DIAG] atask complete | subagent=%s | runnable_type=%s | chunk_count=%d | stream_writer_count=%d | had_result=%s",
+                    subagent_type,
+                    type(subagent).__name__,
+                    chunk_count,
+                    stream_writer_count,
+                    result is not None,
+                )
         if result is None:
             result = await subagent.ainvoke(subagent_state)
         return _return_command_with_state_update(result, runtime.tool_call_id)
