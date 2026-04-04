@@ -274,3 +274,55 @@ create_deep_agent(model=model, backend=backend)
 - [ ] 将 `StateBackend(runtime)` / `lambda rt: StateBackend(rt)` 改为 `StateBackend()`
 - [ ] 如使用 `_offload_to_backend` 返回值，适配新的 tuple 返回类型
 - [ ] 如有调用 `http_request` 工具的代码，需移除相关引用
+
+---
+
+## Round 10+ 变更摘要 (2026-04-04)
+
+### SubAgent 实时进度 Streaming
+
+SubAgent 执行过程中通过 `stream_writer` 发出 `subagent_progress` 自定义事件，客户端可实时获取工具调用、工具结果、AI 思考等进度信息。
+
+**前端接入要求**:
+
+- `streamMode` 必须包含 `"custom"`：`streamMode: ["values", "messages", "custom"]`
+- 处理 `event.type === "custom"` 中的 `subagent_progress` 事件
+
+**事件数据结构**:
+
+```typescript
+{
+  type: "subagent_progress",
+  subagent_type: string,      // SubAgent 名称
+  message_count: number,       // 当前消息总数
+  step_type?: "tool_call" | "tool_result" | "thinking",
+  tool_name?: string,          // 工具名称
+  content_preview?: string,    // 内容摘要（最多 300 字符，不含工具参数）
+}
+```
+
+**诊断开关**: `DEEPAGENTS_SUBAGENT_STREAM_DIAGNOSTICS=1` 可启用服务端诊断日志。
+
+### ⚠️ _EXCLUDED_STATE_KEYS 扩展（并行 SubAgent 修复）
+
+新增三个字段到 `_EXCLUDED_STATE_KEYS`：`skills_loaded`、`skill_resources`、`_summarization_event`。
+
+**影响**: 修复并行 SubAgent 执行时的 `InvalidUpdateError: At key 'skills_loaded': Can receive only one value per step`。
+
+**根因**: `astream(stream_mode="values")` 使用 `stream_channels`（不过滤 `PrivateStateAttr`），导致这些字段从 SubAgent 结果泄漏回父 Agent。`invoke()` 路径不受影响（`output_channels` 正确过滤了 `PrivateStateAttr`）。
+
+**⚠️ 自定义 Backend 注意**: 如有自定义 Backend 实现的 `ls()`/`glob()` 返回 `list` 而非 `LsResult`/`GlobResult`，框架现在会自动包装并发出 `DeprecationWarning`。**v0.7 将移除此兼容支持**，请尽快迁移到正确的返回类型。
+
+### 迁移检查清单
+
+- [ ] 前端 `streamMode` 配置添加 `"custom"` 以接收 SubAgent 进度事件
+- [ ] 如有自定义 Backend 的 `ls()`/`glob()` 返回 `list`，改为返回 `LsResult`/`GlobResult`
+- [ ] 并行 SubAgent 场景：确认升级后 `InvalidUpdateError` 不再出现
+
+### SSE 长连接注意事项
+
+SubAgent 执行可能持续 5-15 分钟。在单步 LLM 推理或工具执行期间，SSE 连接可能因 HTTP idle timeout（通常 2 分钟）断开。建议：
+
+- **反向代理层**（nginx/Caddy 等）：将 SSE 路由的 `proxy_read_timeout` 调至 15-30 分钟
+- **前端**：保留 `onDisconnect: "continue"` 配置 + 轮询兜底机制
+- 框架的 `stream_writer` 在 SubAgent 活跃步骤间正常发出事件，但无法覆盖单步长时间执行的空闲期
