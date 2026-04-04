@@ -134,7 +134,23 @@ DEFAULT_SUBAGENT_PROMPT = "In order to complete the objective that the user asks
 #    SkillsMiddleware).
 # 4. The subagent_logs key is excluded when passing parent state to subagents to prevent
 #    log pollution from parent agents affecting child agents (each tracks its own logs).
-_EXCLUDED_STATE_KEYS = {"messages", "todos", "structured_response", "skills_metadata", "memory_contents", "subagent_logs"}
+# 5. All PrivateStateAttr fields are per-agent state managed by their respective middleware.
+#    Each subagent maintains its own instance independently. Without exclusion, parallel
+#    subagents returning the same key cause InvalidUpdateError (no reducer defined, two
+#    writes to same key in one step).
+#    - skills_loaded, skill_resources: SkillsMiddleware (each subagent loads its own skills)
+#    - _summarization_event: SummarizationMiddleware (each subagent tracks its own context)
+_EXCLUDED_STATE_KEYS = {
+    "messages",
+    "todos",
+    "structured_response",
+    "skills_metadata",
+    "memory_contents",
+    "subagent_logs",
+    "skills_loaded",
+    "skill_resources",
+    "_summarization_event",
+}
 
 # Feature flag: enable SubAgent execution logging via environment variable
 # Set DEEPAGENTS_SUBAGENT_LOGGING=1 to capture tool calls and results for display/debugging

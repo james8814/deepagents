@@ -42,6 +42,9 @@ from deepagents.backends.protocol import (
     BackendProtocol,
     EditResult,
     FileData as FileData,  # Re-export for backwards compatibility
+    FileInfo,
+    GlobResult,
+    LsResult,
     ReadResult,
     SandboxBackendProtocol,
     WriteResult,
@@ -135,6 +138,53 @@ def _file_data_reducer(left: dict[str, FileData] | None, right: dict[str, FileDa
         else:
             result[key] = value
     return result
+
+
+def _coerce_file_info_list(raw: list[object]) -> list[FileInfo]:
+    entries: list[FileInfo] = []
+    for item in raw:
+        if isinstance(item, str):
+            entries.append({"path": item})
+            continue
+        if isinstance(item, dict):
+            path = cast("dict[str, object]", item).get("path")
+            if isinstance(path, str):
+                entries.append(cast("FileInfo", item))
+                continue
+        entries.append({"path": str(item)})
+    return entries
+
+
+def _normalize_ls_result(result: object) -> LsResult:
+    if isinstance(result, LsResult):
+        return result
+    if isinstance(result, str):
+        return LsResult(error=result)
+    if isinstance(result, list):
+        warnings.warn(
+            "Returning a plain `list` from `backend.ls()` is deprecated. Return a `LsResult` instead. "
+            "Returning `list` will not be supported in v0.7.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return LsResult(entries=_coerce_file_info_list(cast("list[object]", result)))
+    return LsResult(error=f"Unexpected return type from backend.ls(): {type(result).__name__}")
+
+
+def _normalize_glob_result(result: object) -> GlobResult:
+    if isinstance(result, GlobResult):
+        return result
+    if isinstance(result, str):
+        return GlobResult(error=result)
+    if isinstance(result, list):
+        warnings.warn(
+            "Returning a plain `list` from `backend.glob()` is deprecated. Return a `GlobResult` instead. "
+            "Returning `list` will not be supported in v0.7.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return GlobResult(matches=_coerce_file_info_list(cast("list[object]", result)))
+    return GlobResult(error=f"Unexpected return type from backend.glob(): {type(result).__name__}")
 
 
 class FilesystemState(AgentState):
@@ -833,7 +883,7 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
                 validated_path = validate_path(path)
             except ValueError as e:
                 return f"Error: {e}"
-            ls_result = resolved_backend.ls(validated_path)
+            ls_result = _normalize_ls_result(resolved_backend.ls(validated_path))
             if ls_result.error:
                 return f"Error: {ls_result.error}"
             infos = ls_result.entries or []
@@ -851,7 +901,7 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
                 validated_path = validate_path(path)
             except ValueError as e:
                 return f"Error: {e}"
-            ls_result = await resolved_backend.als(validated_path)
+            ls_result = _normalize_ls_result(await resolved_backend.als(validated_path))
             if ls_result.error:
                 return f"Error: {ls_result.error}"
             infos = ls_result.entries or []
@@ -1108,7 +1158,7 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                 future = executor.submit(lambda: ctx.run(resolved_backend.glob, pattern, path=validated_path))
                 try:
-                    glob_result = future.result(timeout=GLOB_TIMEOUT)
+                    glob_result = _normalize_glob_result(future.result(timeout=GLOB_TIMEOUT))
                 except concurrent.futures.TimeoutError:
                     return f"Error: glob timed out after {GLOB_TIMEOUT}s. Try a more specific pattern or a narrower path."
             if glob_result.error:
@@ -1130,9 +1180,11 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
             except ValueError as e:
                 return f"Error: {e}"
             try:
-                glob_result = await asyncio.wait_for(
-                    resolved_backend.aglob(pattern, path=validated_path),
-                    timeout=GLOB_TIMEOUT,
+                glob_result = _normalize_glob_result(
+                    await asyncio.wait_for(
+                        resolved_backend.aglob(pattern, path=validated_path),
+                        timeout=GLOB_TIMEOUT,
+                    )
                 )
             except TimeoutError:
                 return f"Error: glob timed out after {GLOB_TIMEOUT}s. Try a more specific pattern or a narrower path."

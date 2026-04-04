@@ -142,8 +142,16 @@ composite = CompositeBackend(
 
 **State Isolation**: When invoking sub-agents, these keys are excluded from parent state:
 ```python
-_EXCLUDED_STATE_KEYS = {"messages", "todos", "structured_response", "skills_metadata", "memory_contents"}
+_EXCLUDED_STATE_KEYS = {
+    "messages", "todos", "structured_response",
+    "skills_metadata", "memory_contents", "subagent_logs",
+    "skills_loaded", "skill_resources", "_summarization_event",
+}
 ```
+
+Note: All `PrivateStateAttr` fields must be in this set. `astream(stream_mode="values")` uses
+`stream_channels` which does NOT respect `PrivateStateAttr` output filtering (unlike `invoke()`),
+so explicit exclusion is required to prevent `InvalidUpdateError` with parallel sub-agents.
 
 **General-Purpose Subagent**: Always created by default with its own middleware stack (TodoList, Filesystem, Summarization, AnthropicCache, PatchToolCalls).
 
