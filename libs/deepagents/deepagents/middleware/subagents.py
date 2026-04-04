@@ -1,5 +1,7 @@
 """Middleware for providing subagents to an agent via a `task` tool."""
 
+import logging
+import os
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, NotRequired, TypedDict, cast
 
@@ -8,7 +10,7 @@ from langchain.agents.middleware import HumanInTheLoopMiddleware, InterruptOnCon
 from langchain.agents.middleware.types import AgentMiddleware, ContextT, ModelRequest, ModelResponse, ResponseT
 from langchain.tools import BaseTool, ToolRuntime
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import Runnable
 from langchain_core.tools import StructuredTool
 from langgraph.types import Command
@@ -126,6 +128,84 @@ DEFAULT_SUBAGENT_PROMPT = "In order to complete the objective that the user asks
 #    be explicitly filtered from runtime.state when invoking a subagent to prevent parent state
 #    from leaking to child agents (e.g., the general-purpose subagent loads its own skills via
 #    SkillsMiddleware).
+logger = logging.getLogger(__name__)
+
+_ENABLE_SUBAGENT_LOGGING = os.environ.get("_ENABLE_SUBAGENT_LOGGING", "").strip().lower() in ("1", "true", "yes")
+"""Enable verbose subagent execution logging (tool calls, results, state changes).
+
+Set ``_ENABLE_SUBAGENT_LOGGING=1`` in the environment to activate.
+"""
+
+_ENABLE_SUBAGENT_STREAM_DIAGNOSTICS = os.environ.get("_ENABLE_SUBAGENT_STREAM_DIAGNOSTICS", "").strip().lower() in ("1", "true", "yes")
+"""Enable diagnostic logging for subagent stream/chunk processing."""
+
+
+def _extract_subagent_logs(messages: list) -> list[dict[str, Any]]:
+    """Extract tool call and result entries from subagent message history.
+
+    Processes the subagent's message history and extracts paired tool calls
+    and their results, with automatic redaction of sensitive fields and
+    truncation of large outputs.
+
+    Args:
+        messages: List of langchain messages from subagent execution.
+
+    Returns:
+        List of log entries, each containing:
+        - For tool calls: {type: "tool_call", tool_name, tool_input, tool_call_id}
+        - For results: {type: "tool_result", tool_call_id, tool_output, status}
+    """
+    entries: list[dict[str, Any]] = []
+
+    for msg in messages[:-1]:
+        if isinstance(msg, AIMessage) and msg.tool_calls:
+            for call in msg.tool_calls:
+                tool_name = call.get("name") or call.get("tool_name") or "unknown"
+                entries.append({
+                    "type": "tool_call",
+                    "tool_name": tool_name,
+                    "tool_input": _redact_sensitive_fields(call.get("args", {})),
+                    "tool_call_id": call.get("id"),
+                })
+        elif isinstance(msg, ToolMessage):
+            truncated_output = _truncate_text(msg.content) if isinstance(msg.content, str) else str(msg.content)
+            tool_name = getattr(msg, "name", None) or "unknown"
+            entries.append({
+                "type": "tool_result",
+                "tool_call_id": msg.tool_call_id,
+                "tool_name": tool_name,
+                "tool_output": truncated_output,
+                "status": getattr(msg, "status", "success"),
+            })
+
+    return entries
+
+
+_SENSITIVE_KEYS = {
+    "token", "secret", "password", "api_key", "authorization",
+    "private_key", "credentials", "access_token", "refresh_token", "jwt",
+}
+
+
+def _redact_sensitive_fields(data: object) -> object:
+    """Recursively redact sensitive fields in nested data structures."""
+    if isinstance(data, dict):
+        return {
+            k: "***" if isinstance(k, str) and k.lower() in _SENSITIVE_KEYS else _redact_sensitive_fields(v)
+            for k, v in data.items()
+        }
+    if isinstance(data, list):
+        return [_redact_sensitive_fields(item) for item in data]
+    return data
+
+
+def _truncate_text(text: str, max_length: int = 500) -> str:
+    """Truncate long text output for logging."""
+    if isinstance(text, str) and len(text) > max_length:
+        return text[:max_length] + f"... [output truncated, {len(text)} chars total]"
+    return text
+
+
 _EXCLUDED_STATE_KEYS = {
     "messages", "todos", "structured_response",
     "skills_metadata", "memory_contents", "subagent_logs",
