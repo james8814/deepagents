@@ -16,9 +16,7 @@
 2. SubAgent `interrupt_on` 继承 → 子代理默认继承父代理的 HITL 配置
 3. `wrap_model_call` 返回类型扩展 → 自定义 middleware 需检查类型标注
 
-**废弃预告（v0.7 移除）**:
-1. `WriteResult.files_update` 字段
-2. `ls_info()` / `glob_info()` / `grep_raw()` 返回 `list` 的兼容
+**废弃预告（v0.7 移除，共 6 项）**: `WriteResult.files_update`、`ls_info()`/`glob_info()`/`grep_raw()` 返回 `list` 兼容、`SubAgentMiddleware(default_model=...)`、`StateBackend(runtime)` — 详见§6
 
 ---
 
@@ -53,9 +51,12 @@ backend = StateBackend()
 def get_backend_factory():
     return lambda rt: CompositeBackend(...)  # 功能不受影响，但每次工具调用有警告
 
-# ✅ 消除警告的方式：在启动时解析一次，传入实例
-backend_instance = get_backend_factory()(initial_runtime)
-create_deep_agent(model=model, backend=backend_instance)
+# ✅ 消除警告的方式：直接构造实例传入（不用 factory）
+backend = CompositeBackend(
+    default=StateBackend(),
+    routes={"/workspace/": FilesystemBackend(root_dir="/workspace")},
+)
+create_deep_agent(model=model, backend=backend)
 ```
 
 ---
