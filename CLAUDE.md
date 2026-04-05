@@ -403,7 +403,7 @@ Scopes: `deepagents`, `sdk`, `deepagents-cli`, `cli`, `harbor`, `acp`, `examples
 
 **Legacy SubAgent API Removed** (2026-04-05): `_get_subagents_legacy()` and related deprecated kwargs (`SubAgentKwargs`, `CompiledSubAgent` TypedDict with `Unpack`) removed from upstream. Local backward-compat shim retained: `SubAgentMiddleware` still accepts `default_model`/`default_tools` with `DeprecationWarning`, but new code should use the new API (`backend=..., subagents=[...]`).
 
-**SubAgent interrupt_on Inheritance** (2026-04-05): Upstream (`acad9bb6`) implements inheritance where declarative `SubAgent` specs inherit parent's `interrupt_on` by default. **Note**: This change exists upstream but has not yet been merged into this repository. Current behavior: SubAgents do NOT inherit parent `interrupt_on`. Opt-out (for when merged): set `interrupt_on: {}` on the SubAgent spec.
+**SubAgent interrupt_on Inheritance** (2026-04-05): Declarative `SubAgent` specs now inherit the parent agent's `interrupt_on` config by default. Opt-out: set `interrupt_on: {}` on the SubAgent spec. `CompiledSubAgent` and `AsyncSubAgent` do not inherit.
 
 **SubAgent Config Forwarding** (2026-04-05): Parent `RunnableConfig` (including `configurable`, `callbacks`, `metadata`) is now forwarded to SubAgent invocations via `_forward_parent_config()`. This ensures LangSmith trace continuity and checkpointer access in subagents.
 
