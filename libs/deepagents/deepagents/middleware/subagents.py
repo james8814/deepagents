@@ -492,6 +492,63 @@ def _build_task_tool(  # noqa: C901
     )
 
 
+def _warn_deprecated_subagent_middleware_args(
+    *,
+    default_model: str | BaseChatModel | None,
+    default_tools: Sequence[BaseTool | Callable | dict[str, Any]] | None,
+    general_purpose_agent: bool,
+) -> None:
+    """Emit a deprecation warning if deprecated SubAgentMiddleware args are used."""
+    if default_model is None and default_tools is None and general_purpose_agent:
+        return
+
+    warnings.warn(
+        "Passing `default_model` / `default_tools` to SubAgentMiddleware is deprecated. "
+        "Prefer the new API: SubAgentMiddleware(backend=..., subagents=[...]) with each "
+        "subagent specifying `model` and `tools`.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+
+
+def _normalize_subagents_for_deprecated_api(
+    subagents: Sequence[SubAgent | CompiledSubAgent] | None,
+    *,
+    default_model: str | BaseChatModel,
+    default_tools: Sequence[BaseTool | Callable | dict[str, Any]] | None,
+    general_purpose_agent: bool,
+) -> list[SubAgent | CompiledSubAgent]:
+    """Fill in missing `model`/`tools` for subagents and inject general-purpose agent."""
+    normalized: list[SubAgent | CompiledSubAgent] = list(subagents or [])
+    tools = list(default_tools or [])
+
+    if general_purpose_agent:
+        general_purpose = cast(
+            "SubAgent",
+            {
+                **GENERAL_PURPOSE_SUBAGENT,
+                "model": default_model,
+                "tools": tools,
+            },
+        )
+        normalized.insert(0, general_purpose)
+
+    output: list[SubAgent | CompiledSubAgent] = []
+    for spec in normalized:
+        if "runnable" in spec:
+            output.append(spec)
+            continue
+
+        updated = spec
+        if "model" not in updated:
+            updated = cast("SubAgent", {**updated, "model": default_model})
+        if "tools" not in updated:
+            updated = cast("SubAgent", {**updated, "tools": tools})
+        output.append(updated)
+
+    return output
+
+
 class SubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
     """Middleware for providing subagents to an agent via a `task` tool.
 
@@ -554,44 +611,27 @@ class SubAgentMiddleware(AgentMiddleware[Any, ContextT, ResponseT]):
         """Initialize the `SubAgentMiddleware`."""
         super().__init__()
 
-        deprecated_used = (
-            default_model is not None
-            or default_tools is not None
-            or general_purpose_agent is not True
+        _warn_deprecated_subagent_middleware_args(
+            default_model=default_model,
+            default_tools=default_tools,
+            general_purpose_agent=general_purpose_agent,
         )
-        if deprecated_used:
-            warnings.warn(
-                "Passing `default_model` / `default_tools` to SubAgentMiddleware is deprecated. "
-                "Prefer the new API: SubAgentMiddleware(backend=..., subagents=[...]) with each "
-                "subagent specifying `model` and `tools`.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
 
         using_new_api = backend is not None
         if not using_new_api and default_model is None:
             msg = "SubAgentMiddleware requires either `backend` (new API) or `default_model` (deprecated API)."
             raise ValueError(msg)
 
-        normalized_subagents: list[SubAgent | CompiledSubAgent] = list(subagents or [])
-        if not using_new_api:
-            if general_purpose_agent:
-                normalized_subagents.insert(
-                    0,
-                    {
-                        **GENERAL_PURPOSE_SUBAGENT,
-                        "model": default_model,
-                        "tools": list(default_tools or []),
-                    },
-                )
-            for i, spec in enumerate(normalized_subagents):
-                if "runnable" in spec:
-                    continue
-                if "model" not in spec:
-                    spec = {**spec, "model": default_model}
-                if "tools" not in spec:
-                    spec = {**spec, "tools": list(default_tools or [])}
-                normalized_subagents[i] = spec
+        normalized_subagents = (
+            list(subagents or [])
+            if using_new_api
+            else _normalize_subagents_for_deprecated_api(
+                subagents,
+                default_model=cast("str | BaseChatModel", default_model),
+                default_tools=default_tools,
+                general_purpose_agent=general_purpose_agent,
+            )
+        )
 
         if not normalized_subagents:
             msg = "At least one subagent must be specified"
