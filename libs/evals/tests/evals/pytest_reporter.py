@@ -37,7 +37,7 @@ _CATEGORY_RESULTS: dict[str, dict[str, int]] = {}
 """Per-category pass/fail/total counters, keyed by category name."""
 
 _EXPERIMENT_LINKS: list[dict[str, str]] = []
-"""LangSmith experiment link dicts with "name" and "url" keys, collected at session teardown."""
+"""LangSmith experiment link dicts with "name", "url", and optional "public_url" keys, collected at session teardown."""
 
 
 def _micro_step_ratio() -> float | None:
@@ -100,6 +100,104 @@ def pytest_configure(config: pytest.Config) -> None:
     _evals_utils._on_efficiency_result = _EFFICIENCY_RESULTS.append
 
 
+def _langsmith_version() -> str:
+    """Return the installed langsmith version, or "unknown" on failure."""
+    try:
+        from importlib.metadata import version as pkg_version
+
+        return pkg_version("langsmith")
+    except Exception:  # noqa: BLE001
+        return "unknown"
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    """Pre-create the LangSmith experiment so the comparison URL is known upfront.
+
+    Hydrates `_LangSmithTestSuite._instances` before any test runs. When the
+    langsmith `@test` decorator calls `from_test` during the first test, it
+    finds the pre-created instance and reuses it instead of creating a new
+    experiment.
+
+    This is the same private API that `_collect_experiment_links` already
+    depends on.
+    """
+    test_suite_name = os.environ.get("LANGSMITH_TEST_SUITE")
+    if not test_suite_name:
+        return
+
+    try:
+        from langsmith import client as ls_client  # noqa: I001
+        from langsmith.testing._internal import (
+            _LangSmithTestSuite,
+            _get_test_suite,
+            _start_experiment,
+        )
+    except ImportError:
+        return
+
+    # Phase 1: create the experiment on the LangSmith server (irreversible).
+    try:
+        client = ls_client.Client()
+        dataset = _get_test_suite(client, test_suite_name)
+
+        model_opt = session.config.getoption("--model", default=None)
+        model_name = model_opt or str(get_default_model().model)
+        experiment_metadata = {
+            "model": model_name,
+            "date": datetime.now(tz=UTC).strftime("%Y-%m-%d"),
+            "deepagents_version": __version__,
+        }
+
+        experiment = _start_experiment(client, dataset, experiment_metadata)
+    except Exception as exc:  # noqa: BLE001
+        msg = f"warning: could not create LangSmith experiment (langsmith=={_langsmith_version()}): {exc!r}"
+        print(msg, file=sys.stderr)  # noqa: T201
+        return
+
+    # Phase 2: register the experiment locally so the @test decorator reuses it.
+    suite_instance = None
+    try:
+        with _LangSmithTestSuite._lock:
+            if not _LangSmithTestSuite._instances:
+                _LangSmithTestSuite._instances = {}
+            suite_instance = _LangSmithTestSuite(client, experiment, dataset, experiment_metadata)
+            _LangSmithTestSuite._instances[test_suite_name] = suite_instance
+    except Exception as exc:  # noqa: BLE001
+        msg = f"warning: experiment created but could not register in _LangSmithTestSuite (langsmith=={_langsmith_version()}): {exc!r}"
+        print(msg, file=sys.stderr)  # noqa: T201
+
+    # Phase 3: build URLs and surface them in terminal output.
+    try:
+        dataset_url = getattr(dataset, "url", None)
+        experiment_id = experiment.id
+        if dataset_url and experiment_id:
+            url = f"{dataset_url}/compare?selectedSessions={experiment_id}"
+            public_url = (
+                _get_public_experiment_url(suite_instance, experiment_id)
+                if suite_instance is not None
+                else None
+            )
+            _EXPERIMENT_LINKS.append(
+                {
+                    "name": experiment.name,
+                    "url": url,
+                    **({"public_url": public_url} if public_url else {}),
+                }
+            )
+            terminal = session.config.pluginmanager.getplugin("terminalreporter")
+            if terminal is not None:
+                terminal.write_line(f"LangSmith experiment: {experiment.name}")
+                if public_url:
+                    terminal.write_line(f"  Public:   {public_url}")
+                    terminal.write_line(f"  Internal: {url}")
+                else:
+                    terminal.write_line(f"  View results at: {url}")
+                terminal.write_line("")
+    except Exception as exc:  # noqa: BLE001
+        msg = f"warning: experiment created but could not build URL (langsmith=={_langsmith_version()}): {exc!r}"
+        print(msg, file=sys.stderr)  # noqa: T201
+
+
 def pytest_collection_modifyitems(
     config: pytest.Config,  # noqa: ARG001
     items: list[pytest.Item],
@@ -145,6 +243,35 @@ def pytest_runtest_logreport(report: pytest.TestReport) -> None:
         _EFFICIENCY_RESULTS[-1].passed = outcome == "passed"
 
 
+def _get_public_experiment_url(suite: object, experiment_id: object) -> str | None:
+    """Build the public comparison URL for an experiment.
+
+    Uses `client.read_dataset_shared_schema` to obtain the public share URL,
+    then appends the experiment ID as a comparison parameter. Returns `None`
+    when the dataset is not shared or on any error.
+    """
+    try:
+        client = getattr(suite, "client", None)
+        dataset = getattr(suite, "_dataset", None)
+        if client is None or dataset is None:
+            return None
+        dataset_id = getattr(dataset, "id", None)
+        if dataset_id is None:
+            return None
+        share_schema = client.read_dataset_shared_schema(dataset_id=dataset_id)
+        share_url = (
+            share_schema.get("url")
+            if isinstance(share_schema, dict)
+            else getattr(share_schema, "url", None)
+        )
+        if share_url:
+            return f"{share_url}/compare?selectedSessions={experiment_id}"
+    except Exception as exc:  # noqa: BLE001
+        msg = f"warning: could not resolve public URL for experiment: {exc!r}"
+        print(msg, file=sys.stderr)  # noqa: T201
+    return None
+
+
 def _collect_experiment_links() -> list[dict[str, str]]:
     """Best-effort extraction of experiment name/URL pairs from langsmith internals.
 
@@ -174,7 +301,11 @@ def _collect_experiment_links() -> list[dict[str, str]]:
             name = getattr(experiment, "name", None) if experiment else None
             if dataset_url and experiment_id:
                 url = f"{dataset_url}/compare?selectedSessions={experiment_id}"
-                links.append({"name": name or url, "url": url})
+                link: dict[str, str] = {"name": name or url, "url": url}
+                public_url = _get_public_experiment_url(suite, experiment_id)
+                if public_url:
+                    link["public_url"] = public_url
+                links.append(link)
             else:
                 skipped += 1
         if skipped and not links:
@@ -199,7 +330,8 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     if session.exitstatus == 1:
         session.exitstatus = 0
 
-    _EXPERIMENT_LINKS.extend(_collect_experiment_links())
+    if not _EXPERIMENT_LINKS:
+        _EXPERIMENT_LINKS.extend(_collect_experiment_links())
 
     correctness = round((_RESULTS["passed"] / _RESULTS["total"]) if _RESULTS["total"] else 0.0, 2)
     step_ratio = _micro_step_ratio()
@@ -256,7 +388,13 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         if _EXPERIMENT_LINKS:
             terminal_reporter.write_sep("-", "langsmith experiments")
             for link in _EXPERIMENT_LINKS:
-                terminal_reporter.write_line(f"  {link['name']}: {link['url']}")
+                public_url = link.get("public_url")
+                if public_url:
+                    terminal_reporter.write_line(f"  {link['name']}:")
+                    terminal_reporter.write_line(f"    Public:   {public_url}")
+                    terminal_reporter.write_line(f"    Internal: {link['url']}")
+                else:
+                    terminal_reporter.write_line(f"  {link['name']}: {link['url']}")
 
     report_path_opt = session.config.getoption("--evals-report-file")
     if not report_path_opt:
