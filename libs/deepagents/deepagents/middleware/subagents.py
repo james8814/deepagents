@@ -648,13 +648,33 @@ def _build_task_tool(  # noqa: C901
             }
         )
 
-    def _validate_and_prepare_state(subagent_type: str, description: str, runtime: ToolRuntime) -> tuple[Runnable, dict]:
-        """Prepare state for invocation."""
+    def _validate_and_prepare_state(
+        subagent_type: str, description: str, runtime: ToolRuntime,
+    ) -> tuple[Runnable, dict, dict]:
+        """Prepare state and config for SubAgent invocation.
+
+        Returns:
+            Tuple of (subagent runnable, subagent state, subagent config).
+            The config carries parent configurable fields (e.g. ``user_id``)
+            but strips checkpoint-scoped keys so that each SubAgent maintains
+            its own independent checkpoint namespace.
+        """
         subagent = subagent_graphs[subagent_type]
         # Create a new state dict to avoid mutating the original
         subagent_state = {k: v for k, v in runtime.state.items() if k not in _EXCLUDED_STATE_KEYS}
         subagent_state["messages"] = [HumanMessage(content=description)]
-        return subagent, subagent_state
+        # Forward parent config (user_id, metadata, etc.) but exclude
+        # checkpoint-scoped keys to avoid SubAgent writing to the parent's
+        # checkpoint namespace.
+        _checkpoint_keys = {"thread_id", "checkpoint_id", "checkpoint_ns"}
+        parent_configurable = (runtime.config or {}).get("configurable", {})
+        subagent_config: dict = {
+            "configurable": {
+                k: v for k, v in parent_configurable.items()
+                if k not in _checkpoint_keys
+            },
+        }
+        return subagent, subagent_state, subagent_config
 
     def task(
         description: str,
@@ -667,14 +687,14 @@ def _build_task_tool(  # noqa: C901
         if not runtime.tool_call_id:
             value_error_msg = "Tool call ID is required for subagent invocation"
             raise ValueError(value_error_msg)
-        subagent, subagent_state = _validate_and_prepare_state(subagent_type, description, runtime)
+        subagent, subagent_state, subagent_config = _validate_and_prepare_state(subagent_type, description, runtime)
         # Stream SubAgent execution for real-time progress updates.
         # stream_writer is a no-op when client does not use stream_mode="custom".
         # Falls back to invoke() for runnables that don't support stream_mode
         # (e.g., RunnableLambda used as CompiledSubAgent).
         result = None
         try:
-            for chunk in subagent.stream(subagent_state, stream_mode="values"):
+            for chunk in subagent.stream(subagent_state, config=subagent_config, stream_mode="values"):
                 result = chunk
                 runtime.stream_writer(_extract_stream_progress(chunk, subagent_type))
         except TypeError as err:
@@ -683,7 +703,7 @@ def _build_task_tool(  # noqa: C901
             else:
                 raise
         if result is None:
-            result = subagent.invoke(subagent_state)
+            result = subagent.invoke(subagent_state, config=subagent_config)
         return _return_command_with_state_update(result, runtime.tool_call_id)
 
     async def atask(
@@ -697,7 +717,7 @@ def _build_task_tool(  # noqa: C901
         if not runtime.tool_call_id:
             value_error_msg = "Tool call ID is required for subagent invocation"
             raise ValueError(value_error_msg)
-        subagent, subagent_state = _validate_and_prepare_state(subagent_type, description, runtime)
+        subagent, subagent_state, subagent_config = _validate_and_prepare_state(subagent_type, description, runtime)
         # Stream SubAgent execution for real-time progress updates.
         # stream_writer is a no-op when client does not use stream_mode="custom".
         # Falls back to ainvoke() for runnables that don't support stream_mode
@@ -706,7 +726,7 @@ def _build_task_tool(  # noqa: C901
         chunk_count = 0
         stream_writer_count = 0
         try:
-            async for chunk in subagent.astream(subagent_state, stream_mode="values"):
+            async for chunk in subagent.astream(subagent_state, config=subagent_config, stream_mode="values"):
                 chunk_count += 1
                 result = chunk
                 runtime.stream_writer(_extract_stream_progress(chunk, subagent_type))
@@ -727,7 +747,7 @@ def _build_task_tool(  # noqa: C901
                 raise
         finally:
             if _ENABLE_SUBAGENT_STREAM_DIAGNOSTICS:
-                logger.debug(
+                logger.info(
                     "[DIAG] atask complete | subagent=%s | runnable_type=%s | chunk_count=%d | stream_writer_count=%d | had_result=%s",
                     subagent_type,
                     type(subagent).__name__,
@@ -736,7 +756,7 @@ def _build_task_tool(  # noqa: C901
                     result is not None,
                 )
         if result is None:
-            result = await subagent.ainvoke(subagent_state)
+            result = await subagent.ainvoke(subagent_state, config=subagent_config)
         return _return_command_with_state_update(result, runtime.tool_call_id)
 
     return StructuredTool.from_function(
