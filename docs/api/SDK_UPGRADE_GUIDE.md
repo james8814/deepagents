@@ -340,15 +340,15 @@ SubAgentMiddleware(
 )
 ```
 
-### SubAgent interrupt_on 继承
+### SubAgent interrupt_on 继承（尚未合入）
 
-Declarative SubAgent 现在默认继承 parent 的 `interrupt_on` 配置。
-
-**opt-out**: 在 SubAgent spec 中显式设置 `interrupt_on: {}` 即可不继承。
+> **注意**: 此变更存在于上游 (`acad9bb6`) 但**尚未合入本仓库 master**。
+> 当前行为：Declarative SubAgent **不会**继承 parent 的 `interrupt_on`。
+> 上游计划行为：默认继承，opt-out 通过 `interrupt_on: {}` 实现。
+> 外部团队的防御性 opt-out（F1）仍然推荐，为未来合入做准备。
 
 ### 其他变更
 
-- `create_deep_agent` 返回类型泛型化（`CompiledStateGraph[AgentState[ResponseT], ContextT, ...]`）
 - Parent `RunnableConfig` 转发到 SubAgent（LangSmith trace 连续性）
 - `_EXCLUDED_STATE_KEYS` 扩展（防止并行 SubAgent 的 `InvalidUpdateError`）
 - `WriteResult`/`EditResult` 的 `files_update` 增加 deprecation warning（v0.7 移除）
