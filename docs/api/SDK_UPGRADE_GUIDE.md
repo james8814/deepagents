@@ -319,6 +319,46 @@ SubAgent 执行过程中通过 `stream_writer` 发出 `subagent_progress` 自定
 - [ ] 如有自定义 Backend 的 `ls()`/`glob()` 返回 `list`，改为返回 `LsResult`/`GlobResult`
 - [ ] 并行 SubAgent 场景：确认升级后 `InvalidUpdateError` 不再出现
 
+---
+
+## Round 11 变更摘要 (2026-04-05)
+
+### ⚠️ Legacy SubAgent API 移除（向后兼容 shim 保留）
+
+上游删除了 `_get_subagents_legacy()`、`SubAgentKwargs`、`CompiledSubAgent` 中的 `Unpack` 用法。
+
+**本地保留了向后兼容 shim**：`SubAgentMiddleware` 仍接受 `default_model`/`default_tools`/`general_purpose_agent`，但会发出 `DeprecationWarning`。
+
+```python
+# 旧方式（仍可用，但会发出 DeprecationWarning）
+SubAgentMiddleware(default_model="openai:gpt-4o", default_tools=[...])
+
+# 新方式（推荐）
+SubAgentMiddleware(
+    backend=StateBackend(),
+    subagents=[{"name": "...", "model": "...", "tools": [...], ...}],
+)
+```
+
+### SubAgent interrupt_on 继承
+
+Declarative SubAgent 现在默认继承 parent 的 `interrupt_on` 配置。
+
+**opt-out**: 在 SubAgent spec 中显式设置 `interrupt_on: {}` 即可不继承。
+
+### 其他变更
+
+- `create_deep_agent` 返回类型泛型化（`CompiledStateGraph[AgentState[ResponseT], ContextT, ...]`）
+- Parent `RunnableConfig` 转发到 SubAgent（LangSmith trace 连续性）
+- `_EXCLUDED_STATE_KEYS` 扩展（防止并行 SubAgent 的 `InvalidUpdateError`）
+- `WriteResult`/`EditResult` 的 `files_update` 增加 deprecation warning（v0.7 移除）
+
+### 迁移检查清单
+
+- [ ] 将 `SubAgentMiddleware(default_model=...)` 改为新 API
+- [ ] 如有 SubAgent 依赖"静默执行不弹审批"，添加 `interrupt_on: {}`
+- [ ] 如有自定义 middleware 覆写 `wrap_model_call`，检查返回类型
+
 ### SSE 长连接注意事项
 
 SubAgent 执行可能持续 5-15 分钟。在单步 LLM 推理或工具执行期间，SSE 连接可能因 HTTP idle timeout（通常 2 分钟）断开。建议：

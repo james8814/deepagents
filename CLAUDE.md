@@ -401,6 +401,14 @@ Scopes: `deepagents`, `sdk`, `deepagents-cli`, `cli`, `harbor`, `acp`, `examples
 
 **http_request Tool Removed** (2026-04-02): The `http_request` tool has been removed from the CLI agent.
 
+**Legacy SubAgent API Removed** (2026-04-05): `_get_subagents_legacy()` and related deprecated kwargs (`SubAgentKwargs`, `CompiledSubAgent` TypedDict with `Unpack`) removed from upstream. Local backward-compat shim retained: `SubAgentMiddleware` still accepts `default_model`/`default_tools` with `DeprecationWarning`, but new code should use the new API (`backend=..., subagents=[...]`).
+
+**SubAgent interrupt_on Inheritance** (2026-04-05): Declarative `SubAgent` specs now inherit the parent agent's `interrupt_on` config by default. Opt-out: set `interrupt_on: {}` on the SubAgent spec. `CompiledSubAgent` and `AsyncSubAgent` do not inherit.
+
+**SubAgent Config Forwarding** (2026-04-05): Parent `RunnableConfig` (including `configurable`, `callbacks`, `metadata`) is now forwarded to SubAgent invocations via `_forward_parent_config()`. This ensures LangSmith trace continuity and checkpointer access in subagents.
+
+**PrivateStateAttr Exclusion** (2026-04-05): `_EXCLUDED_STATE_KEYS` in `subagents.py` expanded to include `subagent_logs`, `skills_loaded`, `skill_resources`, `_summarization_event`. All `PrivateStateAttr` fields must be in this set to prevent `InvalidUpdateError` with parallel sub-agents.
+
 **Message ID Requirement**: All messages must have IDs for proper state management (see `_ensure_message_ids` in summarization).
 
 **Backend Download vs Read**: Use `download_files()` for raw content (editing), `read()` returns line-numbered format (for LLM consumption).
