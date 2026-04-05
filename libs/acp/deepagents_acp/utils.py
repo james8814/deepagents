@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 import shlex
 from typing import TYPE_CHECKING
 
@@ -14,6 +15,44 @@ if TYPE_CHECKING:
         ResourceContentBlock,
         TextContentBlock,
     )
+
+DANGEROUS_SHELL_PATTERNS = (
+    "$(",  # Command substitution
+    "`",  # Backtick command substitution
+    "$'",  # ANSI-C quoting (can encode dangerous chars via escape sequences)
+    "\n",  # Newline (command injection)
+    "\r",  # Carriage return (command injection)
+    "\t",  # Tab (can be used for injection in some shells)
+    "<(",  # Process substitution (input)
+    ">(",  # Process substitution (output)
+    "<<<",  # Here-string
+    "<<",  # Here-doc (can embed commands)
+    ">>",  # Append redirect
+    ">",  # Output redirect
+    "<",  # Input redirect
+    "${",  # Variable expansion with braces
+)
+
+
+def contains_dangerous_patterns(command: str) -> bool:
+    """Check if a shell command contains dangerous metacharacter patterns.
+
+    This is used to prevent allow-list checks from being bypassed by embedding
+    arbitrary execution in a command that otherwise looks safe.
+
+    Args:
+        command: The shell command to check.
+
+    Returns:
+        `True` if dangerous patterns are found, `False` otherwise.
+    """
+    if any(pattern in command for pattern in DANGEROUS_SHELL_PATTERNS):
+        return True
+
+    if re.search(r"\$[A-Za-z_]", command):
+        return True
+
+    return bool(re.search(r"(?<![&])&(?![&])", command))
 
 
 def convert_text_block_to_content_blocks(block: TextContentBlock) -> list[dict[str, str]]:
