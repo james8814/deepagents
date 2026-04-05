@@ -30,12 +30,14 @@
 
 ### 影响判断
 
-| 使用方式 | 是否受影响 | 操作 |
-|---------|-----------|------|
-| `StateBackend` 作为 class ref（不带括号） | ✅ 受影响 | 改为 `StateBackend()` |
-| `StateBackend(runtime)` 传入 runtime 参数 | ✅ 受影响（DeprecationWarning） | 改为 `StateBackend()` |
-| 自定义 `get_backend_factory()` 返回 `CompositeBackend` | ❌ **不受影响** | `BackendFactory` 类型仍被接受 |
-| `FilesystemBackend(root_dir=...)` | ❌ 不受影响 | 无需改动 |
+| 使用方式 | 功能影响 | DeprecationWarning | 操作 |
+|---------|---------|-------------------|------|
+| `StateBackend` 作为 class ref（不带括号） | ✅ 受影响 | 每次工具调用 1x | 改为 `StateBackend()` |
+| `StateBackend(runtime)` 传入 runtime 参数 | ✅ 受影响 | 每次工具调用 1x | 改为 `StateBackend()` |
+| 自定义 `get_backend_factory()` 返回 callable | ❌ **功能不受影响** | ⚠️ **每次工具调用 1x** | 见下方说明 |
+| `FilesystemBackend(root_dir=...)` | ❌ 不受影响 | 无 | 无需改动 |
+
+> **⚠️ 自定义 Backend Factory 警告说明**: `FilesystemMiddleware._get_backend()` 对**所有 callable backend** 发出 `DeprecationWarning`（`filesystem.py:L861`），包括自定义 factory。功能完全正常，但每次 filesystem 工具调用（read_file, write_file, edit_file, ls, glob, grep, execute）都会产生 1 次警告。如果日志噪声不可接受，建议将 factory 返回的结果缓存为实例后传入，或使用 `warnings.filterwarnings("ignore", category=DeprecationWarning, module="deepagents.middleware.filesystem")` 抑制。
 
 ### 迁移示例
 
@@ -47,9 +49,13 @@ backend = lambda rt: StateBackend(rt)
 # ✅ 新方式
 backend = StateBackend()
 
-# ✅ 自定义 factory 仍然有效
+# ⚠️ 自定义 factory 功能正常，但会产生 DeprecationWarning
 def get_backend_factory():
-    return lambda rt: CompositeBackend(...)  # 不受影响
+    return lambda rt: CompositeBackend(...)  # 功能不受影响，但每次工具调用有警告
+
+# ✅ 消除警告的方式：在启动时解析一次，传入实例
+backend_instance = get_backend_factory()(initial_runtime)
+create_deep_agent(model=model, backend=backend_instance)
 ```
 
 ---
@@ -211,6 +217,7 @@ SubAgentMiddleware(
 - [ ] `WriteResult.files_update` 调用点排查
 - [ ] 自定义 Backend 的 `ls_info()`/`glob_info()`/`grep_raw()` 返回类型迁移
 - [ ] `SubAgentMiddleware(default_model=...)` → 新 API 迁移
+- [ ] 自定义 Backend Factory 的 DeprecationWarning 处理（改为传入实例或抑制警告）
 
 ---
 
