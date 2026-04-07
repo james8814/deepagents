@@ -342,7 +342,7 @@ User: "I want to order a pizza from Dominos, order a burger from McDonald's, and
 Assistant: *Calls tools directly in parallel to order a pizza from Dominos, a burger from McDonald's, and a salad from Subway*
 <commentary>
 The assistant did not use the task tool because the objective is super simple and clear and only requires a few trivial tool calls.
-It is better to just complete the task directly and NOT use the `task`tool.
+It is better to just complete the task directly and NOT use the `task` tool.
 </commentary>
 </example>
 
@@ -352,7 +352,7 @@ It is better to just complete the task directly and NOT use the `task`tool.
 "content-reviewer": use this agent after you are done creating significant content or documents
 "greeting-responder": use this agent when to respond to user greetings with a friendly joke
 "research-analyst": use this agent to conduct thorough research on complex topics
-</example_agent_description>
+</example_agent_descriptions>
 
 <example>
 user: "Please write a function that checks if a number is prime"
@@ -550,7 +550,9 @@ def _build_task_tool(  # noqa: C901
                 if _ENABLE_SUBAGENT_STREAM_DIAGNOSTICS:
                     logger.warning(
                         "[DIAG] astream fallback triggered: %s | subagent=%s | runnable_type=%s",
-                        str(err), subagent_type, type(subagent).__name__,
+                        str(err),
+                        subagent_type,
+                        type(subagent).__name__,
                     )
                 result = None
             else:
@@ -559,7 +561,11 @@ def _build_task_tool(  # noqa: C901
             if _ENABLE_SUBAGENT_STREAM_DIAGNOSTICS:
                 logger.info(
                     "[DIAG] atask complete | subagent=%s | runnable_type=%s | chunk_count=%d | stream_writer_count=%d | had_result=%s",
-                    subagent_type, type(subagent).__name__, chunk_count, stream_writer_count, result is not None,
+                    subagent_type,
+                    type(subagent).__name__,
+                    chunk_count,
+                    stream_writer_count,
+                    result is not None,
                 )
         if result is None:
             result = await subagent.ainvoke(subagent_state)
