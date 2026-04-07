@@ -550,7 +550,9 @@ def _build_task_tool(  # noqa: C901
                 if _ENABLE_SUBAGENT_STREAM_DIAGNOSTICS:
                     logger.warning(
                         "[DIAG] astream fallback triggered: %s | subagent=%s | runnable_type=%s",
-                        str(err), subagent_type, type(subagent).__name__,
+                        str(err),
+                        subagent_type,
+                        type(subagent).__name__,
                     )
                 result = None
             else:
@@ -559,7 +561,11 @@ def _build_task_tool(  # noqa: C901
             if _ENABLE_SUBAGENT_STREAM_DIAGNOSTICS:
                 logger.info(
                     "[DIAG] atask complete | subagent=%s | runnable_type=%s | chunk_count=%d | stream_writer_count=%d | had_result=%s",
-                    subagent_type, type(subagent).__name__, chunk_count, stream_writer_count, result is not None,
+                    subagent_type,
+                    type(subagent).__name__,
+                    chunk_count,
+                    stream_writer_count,
+                    result is not None,
                 )
         if result is None:
             result = await subagent.ainvoke(subagent_state)
