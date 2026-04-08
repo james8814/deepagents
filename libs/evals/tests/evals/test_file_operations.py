@@ -30,6 +30,7 @@ from tests.evals.utils import (
 pytestmark = [pytest.mark.eval_category("file_operations")]
 
 
+@pytest.mark.eval_tier("baseline")
 @pytest.mark.eval_category("file_operations")
 @pytest.mark.langsmith
 def test_read_file_seeded_state_backend_file(model: BaseChatModel) -> None:
@@ -49,6 +50,7 @@ def test_read_file_seeded_state_backend_file(model: BaseChatModel) -> None:
     )
 
 
+@pytest.mark.eval_tier("baseline")
 @pytest.mark.eval_category("file_operations")
 @pytest.mark.langsmith
 def test_write_file_simple(model: BaseChatModel) -> None:
@@ -70,6 +72,7 @@ def test_write_file_simple(model: BaseChatModel) -> None:
     )
 
 
+@pytest.mark.eval_tier("baseline")
 @pytest.mark.eval_category("file_operations")
 @pytest.mark.langsmith
 def test_write_files_in_parallel(model: str) -> None:
@@ -101,6 +104,7 @@ def test_write_files_in_parallel(model: str) -> None:
     )
 
 
+@pytest.mark.eval_tier("baseline")
 @pytest.mark.eval_category("file_operations")
 @pytest.mark.langsmith
 def test_write_files_in_parallel_confirm_with_verification(model: str) -> None:
@@ -135,6 +139,7 @@ def test_write_files_in_parallel_confirm_with_verification(model: str) -> None:
     )
 
 
+@pytest.mark.eval_tier("baseline")
 @pytest.mark.eval_category("file_operations")
 @pytest.mark.langsmith
 def test_write_files_in_parallel_ambiguous_confirmation(model: BaseChatModel) -> None:
@@ -169,6 +174,7 @@ def test_write_files_in_parallel_ambiguous_confirmation(model: BaseChatModel) ->
     )
 
 
+@pytest.mark.eval_tier("baseline")
 @pytest.mark.eval_category("file_operations")
 @pytest.mark.langsmith
 def test_ls_directory_contains_file_yes_no(model: BaseChatModel) -> None:
@@ -192,6 +198,7 @@ def test_ls_directory_contains_file_yes_no(model: BaseChatModel) -> None:
     )
 
 
+@pytest.mark.eval_tier("baseline")
 @pytest.mark.eval_category("file_operations")
 @pytest.mark.langsmith
 def test_ls_directory_missing_file_yes_no(model: BaseChatModel) -> None:
@@ -214,6 +221,7 @@ def test_ls_directory_missing_file_yes_no(model: BaseChatModel) -> None:
     )
 
 
+@pytest.mark.eval_tier("baseline")
 @pytest.mark.eval_category("file_operations")
 @pytest.mark.langsmith
 def test_edit_file_replace_text(model: BaseChatModel) -> None:
@@ -236,6 +244,7 @@ def test_edit_file_replace_text(model: BaseChatModel) -> None:
     )
 
 
+@pytest.mark.eval_tier("baseline")
 @pytest.mark.eval_category("file_operations")
 @pytest.mark.langsmith
 def test_read_then_write_derived_output(model: BaseChatModel) -> None:
@@ -260,6 +269,7 @@ def test_read_then_write_derived_output(model: BaseChatModel) -> None:
     )
 
 
+@pytest.mark.eval_tier("baseline")
 @pytest.mark.eval_category("file_operations")
 @pytest.mark.langsmith
 def test_avoid_unnecessary_tool_calls(model: BaseChatModel) -> None:
@@ -277,6 +287,7 @@ def test_avoid_unnecessary_tool_calls(model: BaseChatModel) -> None:
     )
 
 
+@pytest.mark.eval_tier("baseline")
 @pytest.mark.eval_category("file_operations")
 @pytest.mark.langsmith
 def test_read_files_in_parallel(model: BaseChatModel) -> None:
@@ -306,6 +317,7 @@ def test_read_files_in_parallel(model: BaseChatModel) -> None:
     )
 
 
+@pytest.mark.eval_tier("baseline")
 @pytest.mark.eval_category("retrieval")
 @pytest.mark.langsmith
 def test_grep_finds_matching_paths(model: BaseChatModel) -> None:
@@ -333,6 +345,7 @@ def test_grep_finds_matching_paths(model: BaseChatModel) -> None:
     )
 
 
+@pytest.mark.eval_tier("baseline")
 @pytest.mark.eval_category("retrieval")
 @pytest.mark.langsmith
 def test_glob_lists_markdown_files(model: BaseChatModel) -> None:
@@ -360,6 +373,7 @@ def test_glob_lists_markdown_files(model: BaseChatModel) -> None:
     )
 
 
+@pytest.mark.eval_tier("baseline")
 @pytest.mark.eval_category("retrieval")
 @pytest.mark.langsmith
 def test_find_magic_phrase_deep_nesting(model: BaseChatModel) -> None:
@@ -395,6 +409,7 @@ def test_find_magic_phrase_deep_nesting(model: BaseChatModel) -> None:
     )
 
 
+@pytest.mark.eval_tier("baseline")
 @pytest.mark.eval_category("retrieval")
 @pytest.mark.langsmith
 def test_identify_quote_author_from_directory_parallel_reads(
@@ -469,6 +484,7 @@ Clues: about programming readability; software craftsmanship.
     )
 
 
+@pytest.mark.eval_tier("baseline")
 @pytest.mark.eval_category("retrieval")
 @pytest.mark.langsmith
 def test_identify_quote_author_from_directory_unprompted_efficiency(
@@ -541,6 +557,7 @@ Clues: about programming readability; software craftsmanship.
     )
 
 
+@pytest.mark.eval_tier("baseline")
 @pytest.mark.eval_category("file_operations")
 @pytest.mark.langsmith
 def test_read_file_truncation_recovery_with_pagination(
@@ -578,6 +595,7 @@ def test_read_file_truncation_recovery_with_pagination(
     )
 
 
+@pytest.mark.eval_tier("baseline")
 @pytest.mark.eval_category("file_operations")
 @pytest.mark.langsmith
 def test_read_file_empty_file_reports_empty(model: BaseChatModel) -> None:

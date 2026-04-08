@@ -39,7 +39,8 @@ from tests.evals.tau2_airline.user_sim import UserSimulator
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
-pytestmark = [pytest.mark.eval_category("tau2_airline")]
+pytestmark = [pytest.mark.eval_category("conversation")]
+"""Apply conversation category to all tests in this module. Tier is set per-test."""
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,7 @@ def _task_id_label(task_id: str) -> str:
     return f"task_{task_id}"
 
 
+@pytest.mark.eval_tier("hillclimb")
 @pytest.mark.langsmith
 @pytest.mark.parametrize("task_id", TASK_IDS, ids=_task_id_label)
 def test_tau2_airline(model: BaseChatModel, task_id: str) -> None:

@@ -21,6 +21,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from tests.evals.utils import AgentTrajectory, run_agent
 
 pytestmark = [pytest.mark.eval_category("summarization")]
+"""Apply summarization category to all tests in this module. Tier is set per-test."""
 
 LARGE_FILE_URL = "https://raw.githubusercontent.com/langchain-ai/deepagents/5c90376c02754c67d448908e55d1e953f54b8acd/libs/deepagents/deepagents/middleware/summarization.py"
 """Pinned URL to a large source file used to trigger the summarization middleware in evals."""
@@ -100,6 +101,7 @@ def _setup_summarization_test(
     return agent, backend, root
 
 
+@pytest.mark.eval_tier("baseline")
 @pytest.mark.langsmith
 def test_summarize_continues_task(tmp_path: Path, model: BaseChatModel) -> None:
     """Test that summarization triggers and the agent can continue reading a large file."""
@@ -139,6 +141,7 @@ def test_summarize_continues_task(tmp_path: Path, model: BaseChatModel) -> None:
     )
 
 
+@pytest.mark.eval_tier("baseline")
 @pytest.mark.langsmith
 def test_summarization_offloads_to_filesystem(tmp_path: Path, model: BaseChatModel) -> None:
     """Test that conversation history is offloaded to filesystem during summarization.
@@ -228,6 +231,7 @@ def _load_seed_messages() -> list[AnyMessage]:
     return load(data)
 
 
+@pytest.mark.eval_tier("baseline")
 @pytest.mark.langsmith
 def test_compact_tool_new_task(tmp_path: Path, model: BaseChatModel) -> None:
     agent, _, _ = _setup_summarization_test(tmp_path, model, 35_000, include_compact_tool=True)
@@ -242,6 +246,7 @@ def test_compact_tool_new_task(tmp_path: Path, model: BaseChatModel) -> None:
     assert _called_compact(trajectory)
 
 
+@pytest.mark.eval_tier("hillclimb")
 @pytest.mark.langsmith
 def test_compact_tool_not_overly_sensitive(tmp_path: Path, model: BaseChatModel) -> None:
     agent, _, _ = _setup_summarization_test(tmp_path, model, 35_000, include_compact_tool=True)
@@ -256,6 +261,7 @@ def test_compact_tool_not_overly_sensitive(tmp_path: Path, model: BaseChatModel)
     assert not _called_compact(trajectory)
 
 
+@pytest.mark.eval_tier("hillclimb")
 @pytest.mark.langsmith
 def test_compact_tool_large_reads(tmp_path: Path, model: BaseChatModel) -> None:
     another_large_file = "https://raw.githubusercontent.com/langchain-ai/deepagents/5c90376c02754c67d448908e55d1e953f54b8acd/libs/deepagents/deepagents/middleware/filesystem.py"
