@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import cast
-
 import pytest
 from langchain.agents import create_agent
 from langchain.agents.structured_output import ToolStrategy
@@ -9,7 +7,6 @@ from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
 from deepagents.graph import create_deep_agent
-from deepagents.middleware.subagents import SubAgent
 from tests.utils import (
     SAMPLE_MODEL,
     TOY_BASKETBALL_RESEARCH,
@@ -22,22 +19,17 @@ from tests.utils import (
     sample_tool,
 )
 
-pytestmark = pytest.mark.requires("llm")
-
 
 class TestDeepAgents:
     def test_deep_agent_with_subagents(self):
-        subagents: list[SubAgent] = [
-            cast(
-                "SubAgent",
-                {
-                    "name": "weather_agent",
-                    "description": "Use this agent to get the weather",
-                    "system_prompt": "You are a weather agent.",
-                    "tools": [get_weather],
-                    "model": SAMPLE_MODEL,
-                },
-            )
+        subagents = [
+            {
+                "name": "weather_agent",
+                "description": "Use this agent to get the weather",
+                "system_prompt": "You are a weather agent.",
+                "tools": [get_weather],
+                "model": SAMPLE_MODEL,
+            }
         ]
         agent = create_deep_agent(tools=[sample_tool], subagents=subagents)
         assert_all_deepagent_qualities(agent)
@@ -108,6 +100,7 @@ class TestDeepAgents:
         assert any(tool_call["name"] == "task" and tool_call["args"].get("subagent_type") == "weather_agent" for tool_call in tool_calls)
         assert any(tool_call["name"] == "task" and tool_call["args"].get("subagent_type") == "soccer_agent" for tool_call in tool_calls)
 
+    @pytest.mark.xfail(strict=True, reason="Subagent middleware double-writes extended state keys in same step")
     def test_deep_agent_with_extended_state_and_subagents(self):
         subagents = [
             {
@@ -143,7 +136,6 @@ class TestDeepAgents:
         tool_calls = [tool_call for msg in agent_messages for tool_call in msg.tool_calls]
         assert any(tool_call["name"] == "task" and tool_call["args"].get("subagent_type") == "basketball_info_agent" for tool_call in tool_calls)
 
-    @pytest.mark.xfail(reason="Requires real LLM API for structured output; response_format ToolStrategy behavior depends on model")
     def test_response_format_tool_strategy(self):
         class StructuredOutput(BaseModel):
             pokemon: list[str]

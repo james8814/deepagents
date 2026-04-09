@@ -1,12 +1,19 @@
 """Test sandbox integrations with upload/download functionality.
 
-This module tests sandbox backends (RunLoop, Daytona, Modal, LangSmith) with support for
-optional sandbox reuse to reduce test execution time.
+This module tests sandbox backends (RunLoop, Daytona, Modal, LangSmith) with
+support for optional sandbox reuse to reduce test execution time.
 
-Set REUSE_SANDBOX=1 environment variable to reuse sandboxes across tests within
-a class. Otherwise, a fresh sandbox is created for each test method.
+Set `REUSE_SANDBOX=1` environment variable to reuse sandboxes across tests
+within a class. Otherwise, a fresh sandbox is created for each test method.
+
+TODO: These tests partially overlap with langchain-tests.SandboxIntegrationTests
+(upload/download tests). Several tests here (test_sandbox_creation,
+test_partial_success_*, error-handling edge cases) are unique. This file and
+test_sandbox_operations.py can be removed once partner packages extend the
+standard suite to cover these cases. Skipped in release pipeline — see release.yml.
 """
 
+import os
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 
@@ -20,8 +27,11 @@ from deepagents_cli.integrations.sandbox_factory import create_sandbox
 class BaseSandboxIntegrationTest(ABC):
     """Base class for sandbox integration tests.
 
-    Subclasses must implement the `sandbox` fixture to provide a sandbox instance.
-    All test methods are defined here and will be inherited by concrete test classes.
+    Subclasses must implement the `sandbox` fixture to provide a
+    sandbox instance.
+
+    All test methods are defined here and will be inherited by concrete
+    test classes.
     """
 
     @pytest.fixture(scope="class")
@@ -289,14 +299,6 @@ class TestRunLoopIntegration(BaseSandboxIntegrationTest):
     @pytest.fixture(scope="class")
     def sandbox(self) -> Iterator[BaseSandbox]:
         """Provide a RunLoop sandbox instance."""
-        import importlib.util
-
-        # Skip if runloop package not available
-        if importlib.util.find_spec("langchain_runloop") is None:
-            pytest.skip(
-                "langchain-runloop package not installed; skipping RunLoop integration tests"
-            )
-
         with create_sandbox("runloop") as sandbox:
             yield sandbox
 
@@ -307,14 +309,6 @@ class TestDaytonaIntegration(BaseSandboxIntegrationTest):
     @pytest.fixture(scope="class")
     def sandbox(self) -> Iterator[BaseSandbox]:
         """Provide a Daytona sandbox instance."""
-        import importlib.util
-
-        # Skip if daytona package not available
-        if importlib.util.find_spec("langchain_daytona") is None:
-            pytest.skip(
-                "langchain-daytona package not installed; skipping Daytona integration tests"
-            )
-
         with create_sandbox("daytona") as sandbox:
             yield sandbox
 
@@ -325,12 +319,6 @@ class TestModalIntegration(BaseSandboxIntegrationTest):
     @pytest.fixture(scope="class")
     def sandbox(self) -> Iterator[BaseSandbox]:
         """Provide a Modal sandbox instance."""
-        import importlib.util
-
-        # Skip if modal package not available
-        if importlib.util.find_spec("modal") is None:
-            pytest.skip("modal package not installed; skipping Modal integration tests")
-
         with create_sandbox("modal") as sandbox:
             yield sandbox
 
@@ -341,17 +329,16 @@ class TestLangSmithIntegration(BaseSandboxIntegrationTest):
     @pytest.fixture(scope="class")
     def sandbox(self) -> Iterator[BaseSandbox]:
         """Provide a LangSmith sandbox instance."""
-        import os
-
-        # Skip if API key not available
-        if not os.environ.get("LANGSMITH_API_KEY"):
-            pytest.skip("LANGSMITH_API_KEY not set; skipping LangSmith integration tests")
-
         with create_sandbox("langsmith") as sandbox:
             yield sandbox
 
 
-@pytest.mark.skip(reason="AgentCore provider not yet implemented in sandbox_factory.py")
+_has_aws_credentials = bool(
+    os.environ.get("AWS_ACCESS_KEY_ID") or os.environ.get("AWS_PROFILE")
+)
+
+
+@pytest.mark.skipif(not _has_aws_credentials, reason="AWS credentials not configured")
 class TestAgentCoreIntegration(BaseSandboxIntegrationTest):
     """Test AgentCore Code Interpreter backend integration."""
 
