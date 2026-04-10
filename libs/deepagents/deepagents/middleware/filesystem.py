@@ -405,7 +405,7 @@ Use this tool to run commands, scripts, tests, builds, and other shell operation
 - execute: run a shell command in the sandbox (returns output and exit code)"""
 
 
-def _supports_execution(backend: BackendProtocol) -> bool:
+def supports_execution(backend: BackendProtocol) -> bool:
     """Check if a backend supports command execution.
 
     For CompositeBackend, checks if the default backend supports execution.
@@ -884,7 +884,7 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
         def sync_ls(
             runtime: ToolRuntime[None, FilesystemState],
             path: Annotated[str, "Absolute path to the directory to list. Must be absolute, not relative."],
-        ) -> str:
+        ) -> ToolMessage | str:
             """Synchronous wrapper for ls tool."""
             resolved_backend = self._get_backend(runtime)
             try:
@@ -896,13 +896,17 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
                 return f"Error: {ls_result.error}"
             infos = ls_result.entries or []
             paths = [fi.get("path", "") for fi in infos]
-            result = truncate_if_too_long(paths)
-            return str(result)
+            return ToolMessage(
+                content=str(truncate_if_too_long(paths)),
+                artifact=ls_result,
+                tool_call_id=runtime.tool_call_id,
+                name="ls",
+            )
 
         async def async_ls(
             runtime: ToolRuntime[None, FilesystemState],
             path: Annotated[str, "Absolute path to the directory to list. Must be absolute, not relative."],
-        ) -> str:
+        ) -> ToolMessage | str:
             """Asynchronous wrapper for ls tool."""
             resolved_backend = self._get_backend(runtime)
             try:
@@ -914,8 +918,12 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
                 return f"Error: {ls_result.error}"
             infos = ls_result.entries or []
             paths = [fi.get("path", "") for fi in infos]
-            result = truncate_if_too_long(paths)
-            return str(result)
+            return ToolMessage(
+                content=str(truncate_if_too_long(paths)),
+                artifact=ls_result,
+                tool_call_id=runtime.tool_call_id,
+                name="ls",
+            )
 
         return StructuredTool.from_function(
             name="ls",
@@ -1066,6 +1074,7 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
                 validated_path = validate_path(file_path)
             except ValueError as e:
                 return f"Error: {e}"
+
             res: WriteResult = resolved_backend.write(validated_path, content)
             if res.error:
                 return res.error
@@ -1082,6 +1091,7 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
                 validated_path = validate_path(file_path)
             except ValueError as e:
                 return f"Error: {e}"
+
             res: WriteResult = await resolved_backend.awrite(validated_path, content)
             if res.error:
                 return res.error
@@ -1114,6 +1124,7 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
                 validated_path = validate_path(file_path)
             except ValueError as e:
                 return f"Error: {e}"
+
             res: EditResult = resolved_backend.edit(validated_path, old_string, new_string, replace_all=replace_all)
             if res.error:
                 return res.error
@@ -1133,6 +1144,7 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
                 validated_path = validate_path(file_path)
             except ValueError as e:
                 return f"Error: {e}"
+
             res: EditResult = await resolved_backend.aedit(validated_path, old_string, new_string, replace_all=replace_all)
             if res.error:
                 return res.error
@@ -1155,7 +1167,7 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
             pattern: Annotated[str, "Glob pattern to match files (e.g., '**/*.py', '*.txt', '/subdir/**/*.md')."],
             runtime: ToolRuntime[None, FilesystemState],
             path: Annotated[str, "Base directory to search from. Defaults to root '/'."] = "/",
-        ) -> str:
+        ) -> ToolMessage | str:
             """Synchronous wrapper for glob tool."""
             resolved_backend = self._get_backend(runtime)
             try:
@@ -1173,14 +1185,18 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
                 return f"Error: {glob_result.error}"
             infos = glob_result.matches or []
             paths = [fi.get("path", "") for fi in infos]
-            result = truncate_if_too_long(paths)
-            return str(result)
+            return ToolMessage(
+                content=str(truncate_if_too_long(paths)),
+                artifact=glob_result,
+                tool_call_id=runtime.tool_call_id,
+                name="glob",
+            )
 
         async def async_glob(
             pattern: Annotated[str, "Glob pattern to match files (e.g., '**/*.py', '*.txt', '/subdir/**/*.md')."],
             runtime: ToolRuntime[None, FilesystemState],
             path: Annotated[str, "Base directory to search from. Defaults to root '/'."] = "/",
-        ) -> str:
+        ) -> ToolMessage | str:
             """Asynchronous wrapper for glob tool."""
             resolved_backend = self._get_backend(runtime)
             try:
@@ -1200,8 +1216,12 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
                 return f"Error: {glob_result.error}"
             infos = glob_result.matches or []
             paths = [fi.get("path", "") for fi in infos]
-            result = truncate_if_too_long(paths)
-            return str(result)
+            return ToolMessage(
+                content=str(truncate_if_too_long(paths)),
+                artifact=glob_result,
+                tool_call_id=runtime.tool_call_id,
+                name="glob",
+            )
 
         return StructuredTool.from_function(
             name="glob",
@@ -1225,15 +1245,25 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
                 Literal["files_with_matches", "content", "count"],
                 "Output format: 'files_with_matches' (file paths only, default), 'content' (matching lines with context), 'count' (match counts per file).",
             ] = "files_with_matches",
-        ) -> str:
+        ) -> ToolMessage | str:
             """Synchronous wrapper for grep tool."""
+            if path is not None:
+                try:
+                    path = validate_path(path)
+                except ValueError as e:
+                    return f"Error: {e}"
             resolved_backend = self._get_backend(runtime)
             grep_result = resolved_backend.grep(pattern, path=path, glob=glob)
             if grep_result.error:
                 return grep_result.error
             matches = grep_result.matches or []
             formatted = format_grep_matches(matches, output_mode)
-            return truncate_if_too_long(formatted)
+            return ToolMessage(
+                content=truncate_if_too_long(formatted),
+                artifact={"result": grep_result, "output_mode": output_mode},
+                tool_call_id=runtime.tool_call_id,
+                name="grep",
+            )
 
         async def async_grep(
             pattern: Annotated[str, "Text pattern to search for (literal string, not regex)."],
@@ -1244,15 +1274,25 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
                 Literal["files_with_matches", "content", "count"],
                 "Output format: 'files_with_matches' (file paths only, default), 'content' (matching lines with context), 'count' (match counts per file).",
             ] = "files_with_matches",
-        ) -> str:
+        ) -> ToolMessage | str:
             """Asynchronous wrapper for grep tool."""
+            if path is not None:
+                try:
+                    path = validate_path(path)
+                except ValueError as e:
+                    return f"Error: {e}"
             resolved_backend = self._get_backend(runtime)
             grep_result = await resolved_backend.agrep(pattern, path=path, glob=glob)
             if grep_result.error:
                 return grep_result.error
             matches = grep_result.matches or []
             formatted = format_grep_matches(matches, output_mode)
-            return truncate_if_too_long(formatted)
+            return ToolMessage(
+                content=truncate_if_too_long(formatted),
+                artifact={"result": grep_result, "output_mode": output_mode},
+                tool_call_id=runtime.tool_call_id,
+                name="grep",
+            )
 
         return StructuredTool.from_function(
             name="grep",
@@ -1285,14 +1325,14 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
             resolved_backend = self._get_backend(runtime)
 
             # Runtime check - fail gracefully if not supported
-            if not _supports_execution(resolved_backend):
+            if not supports_execution(resolved_backend):
                 return (
                     "Error: Execution not available. This agent's backend "
                     "does not support command execution (SandboxBackendProtocol). "
                     "To use the execute tool, provide a backend that implements SandboxBackendProtocol."
                 )
 
-            # Safe cast: _supports_execution validates that execute()/aexecute() exist
+            # Safe cast: supports_execution validates that execute()/aexecute() exist
             # (either SandboxBackendProtocol or CompositeBackend with sandbox default)
             executable = cast("SandboxBackendProtocol", resolved_backend)
             if timeout is not None and not execute_accepts_timeout(type(executable)):
@@ -1341,14 +1381,14 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
             resolved_backend = self._get_backend(runtime)
 
             # Runtime check - fail gracefully if not supported
-            if not _supports_execution(resolved_backend):
+            if not supports_execution(resolved_backend):
                 return (
                     "Error: Execution not available. This agent's backend "
                     "does not support command execution (SandboxBackendProtocol). "
                     "To use the execute tool, provide a backend that implements SandboxBackendProtocol."
                 )
 
-            # Safe cast: _supports_execution validates that execute()/aexecute() exist
+            # Safe cast: supports_execution validates that execute()/aexecute() exist
             executable = cast("SandboxBackendProtocol", resolved_backend)
             if timeout is not None and not execute_accepts_timeout(type(executable)):
                 return (
@@ -1417,7 +1457,7 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
         if has_execute_tool:
             # Resolve backend to check execution support
             backend = self._get_backend(request.runtime)  # ty: ignore[invalid-argument-type]
-            backend_supports_execution = _supports_execution(backend)
+            backend_supports_execution = supports_execution(backend)
 
             # If execute tool exists but backend doesn't support it, filter it out
             if not backend_supports_execution:
@@ -1482,7 +1522,7 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
         if has_execute_tool:
             # Resolve backend to check execution support
             backend = self._get_backend(request.runtime)  # ty: ignore[invalid-argument-type]
-            backend_supports_execution = _supports_execution(backend)
+            backend_supports_execution = supports_execution(backend)
 
             # If execute tool exists but backend doesn't support it, filter it out
             if not backend_supports_execution:
