@@ -22,10 +22,11 @@
 1. `resolve_model()` 行为变更 — 现在通过 Profile 注册表驱动，不再是 if-else 分支
 2. `StoreBackend` namespace factory 签名变更 — 旧签名仍可用但发出 DeprecationWarning
 3. 中间件栈新增 3 层 — 如果你有依赖栈顺序的自定义中间件，需确认兼容性
+4. `model` 建议统一使用 `provider:model`（如 `anthropic:claude-sonnet-4-6`）以启用 provider 级 profile（extra middleware / 默认参数等）
 
 **不影响你的代码（如果你没有做以下事情）**:
 
-- 直接调用 `resolve_model()` 内部函数
+- 依赖 `resolve_model()` 的内部实现细节（例如假设某些 provider 的默认 kwargs 来自 if-else 分支）
 - 自定义 `StoreBackend` namespace factory
 - 依赖中间件栈的精确位置关系
 
@@ -43,7 +44,7 @@
 from deepagents import create_deep_agent, FilesystemPermission
 
 agent = create_deep_agent(
-    model="claude-sonnet-4-6",
+    model="anthropic:claude-sonnet-4-6",
     permissions=[
         # 禁止读取 /secrets/ 下的所有文件
         FilesystemPermission(operations=["read"], paths=["/secrets/**"], mode="deny"),
@@ -58,13 +59,13 @@ agent = create_deep_agent(
 ### 1.3 核心语义
 
 | 特性 | 说明 |
-|------|------|
+| --- | --- |
 | 评估顺序 | **First-match-wins** — 规则按声明顺序评估，第一条匹配的规则生效 |
 | 默认策略 | **Permissive** — 无匹配规则时允许操作 |
 | 操作类型 | `read`（ls, read_file, glob, grep）/ `write`（write_file, edit_file） |
 | 路径匹配 | 使用 `wcmatch.glob`，支持 `*`、`**`、`?` 通配符 |
 | Pre-check | write/edit/read 违规 → 返回 error ToolMessage |
-| Post-filter | ls/glob/grep 结果中 deny 路径被**静默过滤**（不泄露路径存在性） |
+| Post-filter | ls/glob/grep 结果中 deny 路径被静默过滤（不泄露路径存在性） |
 
 ### 1.4 CompositeBackend 路由感知
 
@@ -112,14 +113,19 @@ agent = create_deep_agent(
 
 ### 1.6 路径校验
 
-- 路径**必须**以 `/` 开头，否则抛出 `ValueError`
-- 路径不允许包含 `..` 穿越，否则抛出 `ValueError`
-- 路径不允许包含 `~`，否则抛出 `NotImplementedError`
+权限匹配前会对路径做 `validate_path()` 规范化与安全校验（虚拟路径语义）：
+
+- 规范化：自动补全前导 `/`、折叠重复分隔符、移除 `.` 等冗余片段（例如 `foo//bar` → `/foo/bar`）
+- 禁止穿越：路径组件中出现 `..` 会抛出 `ValueError`
+- 禁止 home 语义：路径以 `~` 开头会抛出 `ValueError`
+- 禁止 Windows 盘符路径：如 `C:\\...` / `D:/...` 会抛出 `ValueError`
+
+注意：工具层仍要求传入绝对虚拟路径（以 `/` 开头）。虽然规范化会补全前导 `/`，但外部团队仍应避免传相对路径，以免与不同工具/后端的校验规则产生差异。
 
 ### 1.7 影响判断
 
 | 场景 | 影响 | 操作 |
-|------|------|------|
+| --- | --- | --- |
 | 未使用 `permissions` 参数 | **无影响** | 无需操作 |
 | 想要限制 agent 文件访问 | **新功能** | 传入 `permissions` 参数 |
 | 自定义 `FilesystemMiddleware` | **低风险** | `_PermissionMiddleware` 在栈末尾，不影响上游工具 |
@@ -166,13 +172,13 @@ return init_chat_model(model, **kwargs)
 ### 2.3 新增中间件层
 
 | 中间件 | 位置 | 作用 |
-|--------|------|------|
+| --- | --- | --- |
 | Profile `extra_middleware` | User middleware 之后 | Provider-specific 中间件注入 |
 | `_ToolExclusionMiddleware` | extra_middleware 之后 | 按 profile 配置过滤工具（provider 不支持的工具不发给模型） |
 
 ### 2.4 中间件栈变更（11 → 14 层）
 
-```
+```text
 Round 12 (11 层):              Round 13 (14 层):
 1. TodoList                    1. TodoList
 2. Skills                      2. Skills
@@ -193,8 +199,8 @@ Round 12 (11 层):              Round 13 (14 层):
 ### 2.5 影响判断
 
 | 场景 | 影响 | 操作 |
-|------|------|------|
-| 使用字符串 model spec（如 `"claude-sonnet-4-6"`） | **无影响** | Profile 自动匹配 |
+| --- | --- | --- |
+| 使用不带 provider 的字符串 model（如 `"claude-sonnet-4-6"`） | **需确认** | 建议改为 `anthropic:claude-sonnet-4-6` 以启用 provider profile（extra middleware / 默认参数）；是否可继续裸名称取决于 `langchain.init_chat_model` 的自动识别能力 |
 | 传入 `BaseChatModel` 实例 | **无影响** | Profile 通过 `model_dump` 回查 |
 | 自定义 middleware 依赖栈位置 | **低风险** | 你的 middleware 在 [8]，新增层在 [9-10]，Cache/Memory/HITL 位置不变 |
 | 直接调用 `resolve_model()` | **行为一致** | 函数签名不变，内部实现改为 profile 驱动 |
@@ -202,11 +208,12 @@ Round 12 (11 层):              Round 13 (14 层):
 
 ### 2.6 OpenRouter 版本要求
 
-```
+```text
 langchain-openrouter >= 0.2.0  (之前无硬性版本要求)
 ```
 
 如果使用 OpenRouter 且安装了旧版，`resolve_model("openrouter:...")` 会抛出 `ImportError`。
+如果未安装 `langchain-openrouter`，版本检查会跳过；后续由 `init_chat_model` 抛出缺失依赖相关错误。
 
 **修复**: `pip install 'langchain-openrouter>=0.2.0'`
 
@@ -239,7 +246,7 @@ StoreBackend(
 ### 3.4 影响判断
 
 | 场景 | 影响 | 操作 |
-|------|------|------|
+| --- | --- | --- |
 | 使用 `StateBackend`（默认） | **无影响** | 不涉及 namespace |
 | 使用 `FilesystemBackend` | **无影响** | 不涉及 namespace |
 | 使用 `StoreBackend` 无自定义 namespace | **无影响** | 默认 namespace 自动迁移 |
@@ -256,7 +263,7 @@ StoreBackend(
 ### 4.2 影响判断
 
 | 场景 | 影响 | 操作 |
-|------|------|------|
+| --- | --- | --- |
 | 在图执行上下文中使用 `StateBackend.upload_files()`（例如通过 `create_deep_agent` 运行时） | **新能力** | 可直接调用 `backend.upload_files()` |
 | 在图执行上下文之外上传到 `StateBackend` | **仍需迁移/注意** | 使用 `deepagents.upload_adapter.upload_files(..., runtime=...)`，`runtime` 是必需参数 |
 | 使用 `upload_adapter` | **无影响** | adapter 仍然可用；对 `StateBackend` 仍然要求提供 `runtime` |
@@ -312,7 +319,7 @@ CLI 内置通知设置 UI，配置工具调用时的通知偏好。
 ## 6. 废弃预告汇总（v0.7 移除）
 
 | # | 废弃项 | 替代方案 | 来源 |
-|---|--------|---------|------|
+| --- | --- | --- | --- |
 | 1 | `BackendContext` wrapper | 直接使用 `Runtime` | Round 13 |
 | 2 | `StoreBackend` 旧 namespace factory 签名 | `lambda rt: ...` | Round 13 |
 | 3 | `WriteResult.files_update` | 内部处理 | Round 10 |
@@ -325,7 +332,7 @@ CLI 内置通知设置 UI，配置工具调用时的通知偏好。
 ## 7. 依赖更新
 
 | 依赖 | 旧版本 | 新版本 | 类型 |
-|------|--------|--------|------|
+| --- | --- | --- | --- |
 | `cryptography` | 46.0.6 | 46.0.7 | 安全修复 |
 | `langchain-core` | 1.2.27 | 1.2.28 | 功能更新 |
 | `langchain-openrouter` | (无硬性要求) | >=0.2.0 | **新增硬性要求**（仅 OpenRouter 用户） |
@@ -346,6 +353,8 @@ CLI 内置通知设置 UI，配置工具调用时的通知偏好。
 - [ ] 如果需要文件访问控制：评估引入 `permissions` 参数
 - [ ] 如果多 provider 混用：确认 harness profiles 自动匹配正确
 - [ ] 更新内部文档说明中间件栈变更（11→14 层）
+- [ ] 灰度升级：先在 CI + 预发/小流量环境验证，观察 `DeprecationWarning` 与工具调用行为，再全量推广
+- [ ] 回滚预案：保留可快速切回旧 SDK 的依赖锁定（requirements/uv lock），并确保新引入的 `permissions` 可通过配置关闭
 
 ### 8.3 无需操作
 
@@ -354,6 +363,24 @@ CLI 内置通知设置 UI，配置工具调用时的通知偏好。
 - [ ] `SubAgent` TypedDict 新增 `permissions` 字段为 `NotRequired`
 - [ ] `FilesystemPermission` 是新类型，不影响现有代码
 
+### 8.4 推荐验证步骤（研发主管）
+
+```bash
+# 1) 跑单测（避免网络依赖）
+make test
+
+# 2) 跑静态检查（如你的仓库启用）
+make lint
+```
+
+### 8.5 推荐发布策略（研发主管）
+
+- Phase 0：锁定升级范围与责任人：哪些服务/仓库升级、哪些不升级；哪些路径启用 `permissions`，哪些保持默认 permissive
+- Phase 1：CI 验证：单测 + lint 全绿，并确保无新增 `DeprecationWarning` 以外的告警
+- Phase 2：预发/灰度：小流量环境观察工具调用失败率、文件工具结果是否被权限过滤（ls/glob/grep 的“静默过滤”属于预期行为）
+- Phase 3：全量：通过配置开关逐步扩大 `permissions` 覆盖面；优先以 deny 保护敏感目录（如 `/secrets/**`）而不是一开始全盘 deny
+- 回滚：保持依赖锁文件可快速切回；将 `permissions` 配置化（可置空/关闭）以快速解除策略误配带来的阻断
+
 ---
 
 ## 9. 完整 API 变更清单
@@ -361,14 +388,17 @@ CLI 内置通知设置 UI，配置工具调用时的通知偏好。
 ### 9.1 新增类型
 
 ```python
+from dataclasses import dataclass
+from typing import Literal
+
 from deepagents import FilesystemPermission
 
 # FilesystemPermission 数据类
 @dataclass
 class FilesystemPermission:
-    operations: list[str]  # "read" | "write"（可多选；规则仅在 operation 匹配时参与评估）
-    paths: list[str]       # Glob 路径模式列表 (e.g. ["/secrets/**"])
-    mode: str              # "allow" | "deny"
+    operations: list[Literal["read", "write"]]  # 可多选；规则仅在 operation 匹配时参与评估
+    paths: list[str]  # Glob 路径模式列表 (e.g. ["/secrets/**"])
+    mode: Literal["allow", "deny"] = "allow"
 ```
 
 ### 9.2 `create_deep_agent()` 新增参数
@@ -401,7 +431,7 @@ StoreBackend(namespace=lambda rt: (rt.server_info.user.identity, "fs"))
 ### 9.5 新增内部模块（不面向外部使用）
 
 | 模块 | 用途 |
-|------|------|
+| --- | --- |
 | `deepagents.profiles._harness_profiles` | Profile 注册表 |
 | `deepagents.profiles._openrouter` | OpenRouter 配置 |
 | `deepagents.profiles._openai` | OpenAI 配置 |
