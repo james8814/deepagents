@@ -2,7 +2,7 @@
 
 **日期**: 2026-04-12
 **适用对象**: 使用 DeepAgents SDK 的外部研发团队
-**SDK 版本**: 0.5.0（版本号不变）
+**SDK 版本**: 0.5.0
 **涵盖变更**: Round 13 (2026-04-12)
 
 ---
@@ -29,6 +29,60 @@
 - 依赖 `resolve_model()` 的内部实现细节（例如假设某些 provider 的默认 kwargs 来自 if-else 分支）
 - 自定义 `StoreBackend` namespace factory
 - 依赖中间件栈的精确位置关系
+
+---
+
+## 0. 外部团队适配指南（建议顺序）
+
+这一节面向“怎么做升级适配”，尽量把信息组织成可执行步骤。后续第 1-5 节是变更细节，第 6-9 节是废弃项与 API 清单。
+
+### 0.1 影响自检（先判断你是否需要改代码）
+
+| 你现在的用法 | 影响级别 | 你需要做什么 |
+| --- | --- | --- |
+| 仅使用 `create_deep_agent(...)` + 默认 backend，未自定义 `StoreBackend(namespace=...)` | 无影响 | 升级依赖后跑测试即可 |
+| 使用 OpenRouter（`model="openrouter:..."`） | 需确认 | 确保 `langchain-openrouter>=0.2.0`，否则 `resolve_model(...)` 会在运行时报错 |
+| 自定义 `StoreBackend(namespace=...)` | 需迁移 | 把 `lambda ctx: ...` 改为 `lambda rt: ...`，并通过预发/灰度观察 `DeprecationWarning` 是否消失 |
+| 自定义 middleware 且依赖“谁在最后/谁先执行”的栈顺序 | 需确认 | 对照第 2.4 节（11→14 层）检查你的逻辑是否依赖旧顺序；重点关注工具过滤与权限层新增 |
+| 想要新增文件访问控制 | 新能力 | 按第 1 节引入 `permissions=[FilesystemPermission(...)]`，并按 0.3 的验收点做灰度观察 |
+| 使用 `deepagents init/dev/deploy` | 新能力 | 按第 5 节准备项目布局与配置，优先用 `--dry-run` 验证产物 |
+
+### 0.2 升级步骤（从可回滚到可发布）
+
+1. 升级 DeepAgents SDK 到 0.5.0，并保持依赖锁可回滚（requirements/uv lock 等）
+2. 运行单测与静态检查（见第 8.4 节），确保升级后“功能不退化”
+3. 扫描并清理 `DeprecationWarning`（见第 6 节）：
+   - 优先处理 `StoreBackend(namespace=...)` 的签名迁移（第 3 节）
+   - 若你实现了自定义 backend：把 `ls_info/glob_info/grep_raw` 迁移到 `ls/glob/grep`（第 6 节）
+4. 若你使用 OpenRouter：先验证版本要求（第 2.6 节），再在预发环境运行一次包含模型调用的用例
+5. 若你引入 `permissions`：从最小 deny 规则开始灰度（例如先 deny `/secrets/**` 的写入或读取），观察工具失败率与“静默过滤”是否符合预期（第 1.3 / 8.5）
+6. 若你使用 deploy：先 `deepagents deploy --dry-run` 生成 bundle 并检查产物，再走平台发布流程（第 5 节）
+
+### 0.3 验收标准（研发主管/负责人可直接用）
+
+- 单测全绿：升级前后用例结果一致（除非你引入了新的 deny 权限规则）
+- 无新增错误告警：允许出现预期的 `DeprecationWarning`（迁移完成后应消失）
+- 工具行为一致：`ls/glob/grep` 返回的路径集合在“无权限 deny”时与升级前一致；启用 deny 后仅表现为被过滤/被拒绝
+- 回滚可行：能在不改业务代码的情况下切回旧依赖锁（必要时先将 `permissions` 置空/关闭）
+
+### 0.4 常见报错/现象速查（外部团队排障）
+
+| 现象/报错 | 典型原因 | 处理建议 |
+| --- | --- | --- |
+| `deepagents requires langchain-openrouter>=0.2.0, but ... is installed` | OpenRouter 版本过低 | `pip install 'langchain-openrouter>=0.2.0'`（见 2.6） |
+| `Windows absolute paths are not supported: C:\\...` | 工具参数传入了 Windows 盘符路径 | 统一改为虚拟绝对路径（以 `/` 开头），例如 `/workspace/file.txt`（见 1.6.2） |
+| `Path traversal not allowed: ~...` / `../...` | 工具参数含 `~` 或 `..` | 传入 `/...` 的虚拟绝对路径，不使用 home/相对路径（见 1.6.2） |
+| `DeprecationWarning: Passing a callable (factory) as backend is deprecated` | 给 `FilesystemMiddleware(backend=...)` 传了 factory callable | 直接传 `BackendProtocol` 实例（如 `StateBackend()`）（见第 6 节） |
+
+### 0.5 术语对照（快速扫一遍，降低沟通成本）
+
+| 术语 | 含义 | 在本文出现位置 |
+| --- | --- | --- |
+| backend | 文件/状态存储后端（State/Filesystem/Store/Composite 等），为工具提供 `ls/read/write/...` 能力 | 第 1/3/4 节 |
+| Runtime | LangGraph 的运行时上下文对象，提供服务端与用户标识等信息 | 第 3 节 |
+| CompositeBackend route | 以路由前缀（如 `/workspace/`）把不同路径分发到不同 backend | 第 1.4 节 |
+| 虚拟路径 | 统一使用以 `/` 开头的路径语义（与真实 OS 路径解耦），工具会先做 `validate_path()` 规范化 | 第 1.6 节 |
+| Harness Profile | provider 级配置注册表（默认参数/extra middleware/工具过滤） | 第 2 节 |
 
 ---
 
@@ -113,7 +167,21 @@ agent = create_deep_agent(
 
 ### 1.6 路径校验
 
-权限匹配前会对路径做 `validate_path()` 规范化与安全校验（虚拟路径语义）：
+本轮涉及两类“路径”校验：一类发生在 **权限规则构造时**（校验 `FilesystemPermission.paths`），另一类发生在 **工具调用运行时**（校验工具参数里的 `file_path` / `path`）。
+
+#### 1.6.1 权限规则构造时（`FilesystemPermission.__post_init__`）
+
+对每条规则的 `paths` 做轻量校验（不做规范化）：
+
+- 必须以 `/` 开头，否则抛出 `ValueError`
+- 路径组件中出现 `..`，抛出 `ValueError`
+- 路径中出现名为 `~` 的路径组件（例如 `/~`、`/~/...`），抛出 `NotImplementedError`（权限规则不支持 `~` 语义）
+
+注意：这里 **不检查** Windows 盘符路径（如 `C:\\...` / `D:/...`），因为权限规则 `paths` 的语义是“虚拟路径的 glob pattern”，推荐始终使用 POSIX 风格的绝对虚拟路径（例如 `/workspace/**`）。
+
+#### 1.6.2 工具运行时（`validate_path()`）
+
+权限匹配前会对工具参数路径做 `validate_path()` 规范化与安全校验（虚拟路径语义）：
 
 - 规范化：自动补全前导 `/`、折叠重复分隔符、移除 `.` 等冗余片段（例如 `foo//bar` → `/foo/bar`）
 - 禁止穿越：路径组件中出现 `..` 会抛出 `ValueError`
@@ -129,6 +197,12 @@ agent = create_deep_agent(
 | 未使用 `permissions` 参数 | **无影响** | 无需操作 |
 | 想要限制 agent 文件访问 | **新功能** | 传入 `permissions` 参数 |
 | 自定义 `FilesystemMiddleware` | **低风险** | `_PermissionMiddleware` 在栈末尾，不影响上游工具 |
+
+### 1.8 适配建议（外部团队落地）
+
+- 从最小 deny 开始：优先 deny 明确敏感目录（例如 `/secrets/**`、`/credentials/**`），避免一上来全盘 deny 导致大量工具失败。
+- 把“工作区”显式 allow：如果你的业务约定只允许在 `/workspace/**` 写入，建议同时加一条 write allow 规则，让意图更清晰（并避免未来默认策略变化时出现意外）。
+- 正确理解“静默过滤”：当 `ls/glob/grep` 命中 deny 路径时，结果会被过滤，而不是返回错误；这是为了不泄露路径存在性。排障时可先临时移除 deny 规则，确认行为差异是否来自权限过滤。
 
 ---
 
@@ -217,6 +291,11 @@ langchain-openrouter >= 0.2.0  (之前无硬性版本要求)
 
 **修复**: `pip install 'langchain-openrouter>=0.2.0'`
 
+### 2.7 适配建议（外部团队落地）
+
+- 统一 `provider:model`：这会触发 provider profile（默认参数、extra middleware、工具过滤等）。对多 provider 混用的服务，建议强制规范化（例如配置层统一补全前缀）。
+- 不要依赖“工具一定存在”：provider profile 可能通过 `_ToolExclusionMiddleware` 过滤某些工具，让它们不出现在模型可见的工具列表中。若你的业务逻辑假设某个工具必然可用，应在调用前做能力检测/降级策略。
+
 ---
 
 ## 3. Namespace Factory 重构（废弃预告）
@@ -238,6 +317,16 @@ StoreBackend(
     namespace=lambda rt: (rt.server_info.user.identity, "fs"),
 )
 ```
+
+#### 3.2.1 如何定位你是否受影响（建议先做这一步）
+
+- 全仓搜索 `StoreBackend(` 并检查是否有 `namespace=` 参数
+- 如果你能看到类似 `lambda ctx:`、`ctx.runtime`、`ctx.state`，说明你在使用旧签名（需要迁移）
+
+迁移时的原则：
+
+- 旧代码里如果只用到了 `ctx.runtime`，通常可以直接把 `ctx.runtime.<...>` 改为 `rt.<...>`
+- 若你依赖了 `ctx.state`（旧 wrapper 暴露的便捷字段），请显式改为从 `rt` 获取你需要的信息；不要继续依赖 compat wrapper 的“鸭子类型”行为（它会在 v0.7 移除）
 
 ### 3.3 兼容层
 
@@ -268,6 +357,25 @@ StoreBackend(
 | 在图执行上下文之外上传到 `StateBackend` | **仍需迁移/注意** | 使用 `deepagents.upload_adapter.upload_files(..., runtime=...)`，`runtime` 是必需参数 |
 | 使用 `upload_adapter` | **无影响** | adapter 仍然可用；对 `StateBackend` 仍然要求提供 `runtime` |
 
+### 4.3 示例（外部团队最常见两种用法）
+
+```python
+from deepagents.backends import StateBackend
+
+backend = StateBackend()
+
+# 用法 A：在图/运行时上下文内（工具调用、middleware、graph node 等）可以直接用 upload_files()
+# backend.upload_files([...])  # 具体参数以你的调用点为准
+```
+
+```python
+# 用法 B：在运行时上下文外（例如你想在启动阶段/独立脚本里上传）
+# 仍应使用 upload_adapter 并显式提供 runtime
+from deepagents.upload_adapter import upload_files
+
+# upload_files(..., runtime=rt)  # runtime 必填；没有 runtime 就无法定位 state 写入位置
+```
+
 ---
 
 ## 5. CLI 新功能
@@ -275,6 +383,8 @@ StoreBackend(
 ### 5.1 `deepagents deploy` 命令
 
 从 `deepagents.toml` 配置文件生成 LangGraph 服务部署包。
+
+注意：`deepagents init` / `deepagents dev` / `deepagents deploy` 均为 beta 能力，配置格式与行为可能在后续版本中调整。
 
 ```bash
 # 初始化（生成 deepagents.toml / AGENTS.md / .env / mcp.json / skills/）
@@ -287,6 +397,28 @@ deepagents dev --port 2024
 deepagents deploy --dry-run
 ```
 
+常用参数:
+
+- `deepagents init <name> --force`：覆盖已存在的同名目录/文件
+- `deepagents dev --config /path/to/deepagents.toml`：显式指定配置路径（否则默认在当前目录查找 `deepagents.toml`；不会向上遍历父目录）
+- `deepagents deploy --config /path/to/deepagents.toml`：显式指定配置路径（否则默认在当前目录查找 `deepagents.toml`；不会向上遍历父目录）
+
+关键约束（对外部团队最常踩坑的点）:
+
+- `AGENTS.md` 是必需项：既是 system prompt，也是 deploy bundler 的 memory seed 来源；部署生成的 graph 会将其注入到只读 memory 路由（写入/编辑会被拦截）。
+- `mcp.json` 是可选项：仅支持 `http`/`sse` 类型的 MCP server；`stdio` 在部署上下文不支持。`deepagents init` 会生成一个空的 `mcp.json`，不用的话可以删除。
+- `.env` 是可选项：用于本地 dev/deploy 时注入环境变量；打包时会单独复制到产物目录，不会写入 `_seed.json`（避免把密钥混进 seed）。
+
+产物对照（便于 code review / 安全审计）：
+
+| 输入（项目目录） | 产物（bundle 目录） | 说明 |
+| --- | --- | --- |
+| `AGENTS.md` | `_seed.json` | 作为 memory seed 注入（只读路由） |
+| `skills/` | `_seed.json` | 作为 skills seed 注入（只读路由） |
+| `mcp.json`（可选） | `_mcp.json` | 被重命名后随 bundle 携带；仅 http/sse |
+| `.env`（可选） | `.env` | 会复制到产物目录，但不会写进 `_seed.json` |
+| `deepagents.toml` | `deploy_graph.py` / `langgraph.json` / `pyproject.toml` | 作为生成图与部署描述的输入 |
+
 配置文件示例:
 
 ```toml
@@ -294,10 +426,14 @@ deepagents deploy --dry-run
 [agent]
 name = "my-agent"
 model = "anthropic:claude-sonnet-4-6"
+```
 
+如果你需要 sandbox（例如代码执行或特定运行环境），再添加 `[sandbox]` 段；不写时等价于 `provider="none"`，会退化为进程内 `StateBackend`（`execute` 工具不可用/为 no-op）：
+
+```toml
 [sandbox]
-provider = "none"
-scope = "thread"
+provider = "none"            # none | langsmith | daytona | modal | runloop
+scope = "thread"             # thread | assistant
 template = "deepagents-deploy"
 image = "python:3"
 ```
@@ -325,17 +461,19 @@ CLI 内置通知设置 UI，配置工具调用时的通知偏好。
 | 3 | `WriteResult.files_update` | 内部处理 | Round 10 |
 | 4 | `ls_info()` / `glob_info()` / `grep_raw()` | `ls()` / `glob()` / `grep()` | Round 10 |
 | 5 | `SubAgentMiddleware(default_model=...)` | `subagents=[...]` | Round 11 |
-| 6 | `StateBackend(runtime)` factory callable | `StateBackend()` | Round 10 |
+| 6 | `FilesystemMiddleware(backend=callable)`（backend factory callable） | 直接传 `BackendProtocol` 实例（例如 `StateBackend()`） | Round 10 |
 
 ---
 
 ## 7. 依赖更新
 
-| 依赖 | 旧版本 | 新版本 | 类型 |
-| --- | --- | --- | --- |
-| `cryptography` | 46.0.6 | 46.0.7 | 安全修复 |
-| `langchain-core` | 1.2.27 | 1.2.28 | 功能更新 |
-| `langchain-openrouter` | (无硬性要求) | >=0.2.0 | **新增硬性要求**（仅 OpenRouter 用户） |
+以下版本为 DeepAgents 官方依赖锁定（以本仓库 `libs/deepagents/uv.lock` 为准）。外部团队的当前版本可能不同，建议以“是否使用对应能力”为准进行升级。
+
+| 依赖 | 版本 | 说明 |
+| --- | --- | --- |
+| `cryptography` | 46.0.7 | 安全修复 |
+| `langchain-core` | 1.2.28 | 功能更新 |
+| `langchain-openrouter` | >=0.2.0 | 仅 OpenRouter 用户需要；版本过低会在 `resolve_model("openrouter:...")` 时报错 |
 
 ---
 
