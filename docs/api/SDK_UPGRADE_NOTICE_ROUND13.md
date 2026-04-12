@@ -9,13 +9,13 @@
 
 ## 快速总结
 
-本次升级包含 **3 项新增子系统**、**2 项废弃预告**（v0.7 移除）和多项向后兼容增强。
+本次升级包含 **3 项新增子系统**、**2 项本轮新增废弃预告 + 4 项历史遗留废弃项汇总**（均计划 v0.7 移除）和多项向后兼容增强。
 
 **新增子系统**:
 
 1. **Permissions 文件系统访问控制** — 声明式 `FilesystemPermission` 规则
 2. **Harness Profiles 提供商配置体系** — `_HarnessProfile` 注册表取代硬编码分支
-3. **CLI Deploy 命令** — `deepagents deploy` 一键部署到 LangSmith
+3. **CLI Deploy 命令** — `deepagents deploy` 一键部署到 LangGraph Platform
 
 **必须关注**:
 
@@ -46,11 +46,11 @@ agent = create_deep_agent(
     model="claude-sonnet-4-6",
     permissions=[
         # 禁止读取 /secrets/ 下的所有文件
-        FilesystemPermission(path="/secrets/**", operation="read", mode="deny"),
+        FilesystemPermission(operations=["read"], paths=["/secrets/**"], mode="deny"),
         # 允许写入 /workspace/ 下的所有文件
-        FilesystemPermission(path="/workspace/**", operation="write", mode="allow"),
+        FilesystemPermission(operations=["write"], paths=["/workspace/**"], mode="allow"),
         # 禁止写入配置文件
-        FilesystemPermission(path="/config/*.yaml", operation="write", mode="deny"),
+        FilesystemPermission(operations=["write"], paths=["/config/*.yaml"], mode="deny"),
     ],
 )
 ```
@@ -80,12 +80,15 @@ agent = create_deep_agent(
     backend=composite,
     permissions=[
         # 规则 scoped 到 /workspace/ 路由
-        FilesystemPermission(path="/workspace/secrets/**", operation="read", mode="deny"),
+        FilesystemPermission(operations=["read"], paths=["/workspace/secrets/**"], mode="deny"),
     ],
 )
 ```
 
-当 `CompositeBackend` 有 sandbox default 时，非路由路径默认允许（sandbox 自身提供隔离）。
+如果你的 backend 具备命令执行能力（实现 `SandboxBackendProtocol`，即 `execute` 工具可用），权限系统 **目前不支持** 对 `execute` 做工具级权限控制：
+
+- 对普通可执行 backend：传入 `permissions` 会抛出 `NotImplementedError`
+- **例外**：当使用 `CompositeBackend` 且 default backend 可执行时，只要你配置的所有 permission `paths` 都严格 scoped 在某个 `routes` 前缀下（权限只作用在路由 backend 上），则允许启用权限系统
 
 ### 1.5 SubAgent 权限继承
 
@@ -100,7 +103,7 @@ agent = create_deep_agent(
             "description": "...",
             "system_prompt": "...",
             "permissions": [  # 覆盖父代理规则
-                FilesystemPermission(path="/**", operation="write", mode="deny"),
+                FilesystemPermission(operations=["write"], paths=["/**"], mode="deny"),
             ],
         },
     ],
@@ -111,6 +114,7 @@ agent = create_deep_agent(
 
 - 路径**必须**以 `/` 开头，否则抛出 `ValueError`
 - 路径不允许包含 `..` 穿越，否则抛出 `ValueError`
+- 路径不允许包含 `~`，否则抛出 `NotImplementedError`
 
 ### 1.7 影响判断
 
@@ -253,8 +257,9 @@ StoreBackend(
 
 | 场景 | 影响 | 操作 |
 |------|------|------|
-| 使用 `upload_files()` with StateBackend | **改善** | 不再需要 graph context workaround |
-| 使用 `upload_adapter` | **无影响** | adapter 仍然工作，会自动利用原生方法 |
+| 在图执行上下文中使用 `StateBackend.upload_files()`（例如通过 `create_deep_agent` 运行时） | **新能力** | 可直接调用 `backend.upload_files()` |
+| 在图执行上下文之外上传到 `StateBackend` | **仍需迁移/注意** | 使用 `deepagents.upload_adapter.upload_files(..., runtime=...)`，`runtime` 是必需参数 |
+| 使用 `upload_adapter` | **无影响** | adapter 仍然可用；对 `StateBackend` 仍然要求提供 `runtime` |
 
 ---
 
@@ -265,14 +270,14 @@ StoreBackend(
 从 `deepagents.toml` 配置文件生成 LangGraph 服务部署包。
 
 ```bash
-# 初始化配置
-deepagents deploy init
+# 初始化（生成 deepagents.toml / AGENTS.md / .env / mcp.json / skills/）
+deepagents init
 
-# 验证配置
-deepagents deploy validate
+# 本地运行 langgraph dev（用于联调）
+deepagents dev --port 2024
 
-# 构建部署包
-deepagents deploy build
+# 部署到 LangGraph Platform（支持 --dry-run 只生成不部署）
+deepagents deploy --dry-run
 ```
 
 配置文件示例:
@@ -280,16 +285,14 @@ deepagents deploy build
 ```toml
 # deepagents.toml
 [agent]
-model = "claude-sonnet-4-6"
-system_prompt = "You are a helpful assistant."
+name = "my-agent"
+model = "anthropic:claude-sonnet-4-6"
 
-[agent.skills]
-sources = ["./skills/"]
-
-[agent.permissions]
-rules = [
-    { path = "/workspace/**", operation = "write", mode = "allow" },
-]
+[sandbox]
+provider = "none"
+scope = "thread"
+template = "deepagents-deploy"
+image = "python:3"
 ```
 
 ### 5.2 `/notifications` 命令
@@ -363,9 +366,9 @@ from deepagents import FilesystemPermission
 # FilesystemPermission 数据类
 @dataclass
 class FilesystemPermission:
-    path: str           # Glob 路径模式 (e.g. "/secrets/**")
-    operation: str      # "read" | "write"
-    mode: str           # "allow" | "deny"
+    operations: list[str]  # "read" | "write"（可多选；规则仅在 operation 匹配时参与评估）
+    paths: list[str]       # Glob 路径模式列表 (e.g. ["/secrets/**"])
+    mode: str              # "allow" | "deny"
 ```
 
 ### 9.2 `create_deep_agent()` 新增参数
@@ -412,6 +415,7 @@ StoreBackend(namespace=lambda rt: (rt.server_info.user.identity, "fs"))
 **问题反馈**: 请提交 GitHub Issue
 
 **文档**:
+
 - [Round 13 合并进度](../../docs/upstream_merge/ROUND13_PROGRESS.md)
 - [Round 13 风险评估](../../docs/upstream_merge/ROUND13_RISK_ASSESSMENT.md)
 - [Round 10+11 升级说明](./SDK_UPGRADE_NOTICE_ROUND10_11.md)
