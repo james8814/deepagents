@@ -1703,10 +1703,7 @@ class TestLoadAsyncSubagents:
         assert result == []
 
 
-<<<<<<< HEAD
 
-=======
->>>>>>> 8c4c72af (chore(cli): bump sdk version (#2510))
 class TestShellAllowListMiddleware:
     """Tests for inline shell command validation middleware."""
 

@@ -2622,7 +2622,7 @@ class DeepAgentsApp(App):
             await self._mount_message(UserMessage(command))
             help_body = (
                 "Commands: /quit, /clear, /offload, /editor, /mcp, "
-"/model [--model-params JSON] [--default], /notifications, "
+                "/model [--model-params JSON] [--default], /notifications, "
                 "/reload, /skill:<name>, /remember, /skill-creator, /theme, "
                 "/tokens, /threads, /trace, "
                 "/update, /auto-update, /upload, /changelog, "

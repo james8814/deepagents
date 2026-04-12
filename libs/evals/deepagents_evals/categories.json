@@ -1,21 +1,16 @@
 {
   "categories": [
+    "conversation",
     "external_benchmarks",
     "file_operations",
-    "followup_quality",
-    "hitl",
     "memory",
-    "memory_agent_bench",
     "retrieval",
-    "skills",
-    "subagents",
     "summarization",
-    "system_prompt",
-    "tau2_airline",
-    "tool_usage",
-    "tool_use"
+    "tool_use",
+    "unit_test"
   ],
   "radar_categories": [
+    "conversation",
     "file_operations",
     "retrieval",
     "tool_use",
@@ -23,19 +18,13 @@
     "summarization"
   ],
   "labels": {
+    "conversation": "Conversation",
     "external_benchmarks": "External Benchmarks",
     "file_operations": "File Ops",
-    "followup_quality": "Follow-up Quality",
-    "hitl": "HITL",
     "memory": "Memory",
-    "memory_agent_bench": "Memory Agent Bench",
     "retrieval": "Retrieval",
-    "skills": "Skills",
-    "subagents": "Sub-Agents",
     "summarization": "Summarization",
-    "system_prompt": "System Prompt",
-    "tau2_airline": "Tau2 Airline",
-    "tool_usage": "Tool Usage",
-    "tool_use": "Tool Use"
+    "tool_use": "Tool Use",
+    "unit_test": "Unit Test"
   }
 }

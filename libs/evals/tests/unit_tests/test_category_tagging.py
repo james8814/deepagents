@@ -14,20 +14,14 @@ from deepagents_evals.radar import ALL_CATEGORIES, CATEGORY_LABELS, EVAL_CATEGOR
 # All eval test modules that define pytestmark with eval_category.
 # Maps category name -> list of test module basenames.
 EXPECTED_CATEGORY_MODULES: dict[str, list[str]] = {
+    "conversation": ["test_followup_quality", "test_tau2_airline"],
     "external_benchmarks": ["test_external_benchmarks"],
     "file_operations": ["test_file_operations"],
-    "followup_quality": ["test_followup_quality"],
-    "hitl": ["test_hitl"],
-    "memory": ["test_memory", "test_memory_multiturn"],
-    "memory_agent_bench": ["test_memory_agent_bench"],
+    "memory": ["test_memory", "test_memory_agent_bench", "test_memory_multiturn"],
     "retrieval": ["test_file_operations"],
-    "skills": ["test_skills"],
-    "subagents": ["test_subagents"],
     "summarization": ["test_summarization"],
-    "system_prompt": ["test_system_prompt"],
-    "tau2_airline": ["test_tau2_airline"],
-    "tool_usage": ["test_tool_usage_relational", "test_tool_selection"],
-    "tool_use": ["test_todos"],
+    "tool_use": ["test_todos", "test_tool_selection", "test_tool_usage_relational"],
+    "unit_test": ["test_hitl", "test_skills", "test_subagents", "test_system_prompt"],
 }
 
 
