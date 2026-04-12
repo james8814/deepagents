@@ -86,9 +86,12 @@ make coverage
 6. `PatchToolCallsMiddleware` - Fixes dangling tool calls
 7. `AsyncSubAgentMiddleware` (optional) - Remote LangGraph server async sub-agents
 8. User-provided middleware (appended)
-9. `AnthropicPromptCachingMiddleware` - Prompt caching (after user middleware to preserve cache prefix)
-10. `MemoryMiddleware` (optional) - Loads `AGENTS.md` into system prompt (last to avoid cache invalidation)
-11. `HumanInTheLoopMiddleware` (optional) - Tool approval before execution
+9. Profile `extra_middleware` (from `_HarnessProfile`) - Provider-specific middleware
+10. `_ToolExclusionMiddleware` (if profile has `excluded_tools`) - Strips tools before model sees them
+11. `AnthropicPromptCachingMiddleware` - Prompt caching (after user middleware to preserve cache prefix)
+12. `MemoryMiddleware` (optional) - Loads `AGENTS.md` into system prompt (last to avoid cache invalidation)
+13. `HumanInTheLoopMiddleware` (optional) - Tool approval before execution
+14. `_PermissionMiddleware` (if `permissions` set) - Filesystem access control (**must be last**)
 
 **File Uploads**: Files uploaded via CLI `/upload <path>` command are stored in `/uploads/`. The upload system includes:
 - **Security validation**: File type detection using magic bytes (via `puremagic`), 100MB size limit, unauthorized type blocking
@@ -383,6 +386,52 @@ Scopes: `deepagents`, `sdk`, `deepagents-cli`, `cli`, `harbor`, `acp`, `examples
 
 **Standardized Error Codes**: `file_not_found`, `permission_denied`, `is_directory`, `invalid_path` - LLM-actionable error reporting.
 
+**Filesystem Permissions** (2026-04-12): Declarative access control via `FilesystemPermission` rules:
+- `create_deep_agent(permissions=[FilesystemPermission(path="/secrets/**", operation="read", mode="deny")])`
+- Operations: `read` (ls, read_file, glob, grep) / `write` (write_file, edit_file)
+- First-match-wins evaluation order; permissive default (no match → allow)
+- Pre-check interception for write/read; post-filter for ls/glob/grep results
+- CompositeBackend route-scoping: rules can target specific routes
+- Path validation: rejects paths without leading `/` and `..` traversal
+- Implementation: `middleware/permissions.py` (397 lines), `_PermissionMiddleware`
+- Tests: `tests/unit_tests/test_permissions.py` (67 tests)
+
+### Harness Profiles (`profiles/`)
+
+**Purpose**: Declarative provider/model-specific configuration replacing hardcoded `if model.startswith(...)` branches.
+
+**Registry**: `_HarnessProfile` dataclass with exact-spec → provider-prefix → empty-default lookup.
+
+**Profile fields**:
+- `init_kwargs` / `init_kwargs_factory` — forwarded to `init_chat_model`
+- `pre_init` — callable invoked before model init (e.g. version checks)
+- `tool_description_overrides` — rewrite tool descriptions per provider
+- `excluded_tools` — tools stripped via `_ToolExclusionMiddleware`
+- `extra_middleware` — provider-specific middleware injected into stack
+- `base_system_prompt` / `system_prompt_suffix` — prompt customization
+
+**Registered profiles**: `openai:` (Responses API auto-detect), `openrouter:` (attribution headers + version check)
+
+**Files**:
+- `profiles/__init__.py` — exports `_HarnessProfile`, `_get_harness_profile`
+- `profiles/_harness_profiles.py` — registry + merge semantics
+- `profiles/_openrouter.py` — OpenRouter attribution + `OPENROUTER_MIN_VERSION`
+- `profiles/_openai.py` — OpenAI Responses API detection
+
+### CLI Deploy (`libs/cli/deepagents_cli/deploy/`)
+
+**Purpose**: One-command deployment to LangSmith Deployment platform.
+
+**Entry**: `deepagents deploy` CLI command
+
+**Config**: `deepagents.toml` declarative agent definition
+
+**Modules**:
+- `config.py` — TOML config parsing + validation
+- `bundler.py` — dependency packaging + provider auto-detection
+- `templates.py` — LangGraph server template generation
+- `commands.py` — CLI command entry point
+
 ## Key Implementation Details
 
 **File Result Eviction** (`FilesystemMiddleware`): Tool results >20k tokens are written to `/large_tool_results/{tool_call_id}` with preview + file reference.
@@ -395,7 +444,7 @@ Scopes: `deepagents`, `sdk`, `deepagents-cli`, `cli`, `harbor`, `acp`, `examples
 
 **Backend Factory Deprecation** (2026-04-02): `StateBackend(runtime)` factory pattern is deprecated. Use `StateBackend()` directly — runtime is now injected internally by middleware. The `backend` parameter on `create_deep_agent` accepts instances only, not callables.
 
-**OpenAI-Compatible Model Resolution** (2026-04-02): `resolve_model()` in `_models.py` auto-disables Responses API when `OPENAI_BASE_URL` points to non-OpenAI endpoints (DeepSeek, Qwen, etc.).
+**OpenAI-Compatible Model Resolution** (2026-04-02): `resolve_model()` in `_models.py` now uses `_HarnessProfile` registry instead of hardcoded `if model.startswith(...)` branches. OpenAI Responses API auto-detection and OpenRouter attribution are profile-driven.
 
 **Token Persistence** (2026-04-02): CLI persists token count in graph state across sessions via `token_state.py`. Token display shows "+" suffix for approximate/interrupted counts.
 
@@ -408,6 +457,26 @@ Scopes: `deepagents`, `sdk`, `deepagents-cli`, `cli`, `harbor`, `acp`, `examples
 **SubAgent Config Forwarding** (2026-04-05): Parent `RunnableConfig` (including `configurable`, `callbacks`, `metadata`) is now forwarded to SubAgent invocations via `_forward_parent_config()`. This ensures LangSmith trace continuity and checkpointer access in subagents.
 
 **PrivateStateAttr Exclusion** (2026-04-05): `_EXCLUDED_STATE_KEYS` in `subagents.py` expanded to include `subagent_logs`, `skills_loaded`, `skill_resources`, `_summarization_event`. All `PrivateStateAttr` fields must be in this set to prevent `InvalidUpdateError` with parallel sub-agents.
+
+**Namespace Factory Refactor** (2026-04-12): `StoreBackend` namespace factory signature changed from `lambda ctx: (ctx.runtime.context.user_id, "fs")` to `lambda rt: (rt.server_info.user.identity, "fs")`. `_NamespaceRuntimeCompat` preserves backward compatibility via duck-typing; `BackendContext` deprecated (v0.7 removal).
+
+**StateBackend.upload_files()** (2026-04-12): Native `upload_files()` implementation on `StateBackend`. Reduces reliance on `upload_adapter` for in-memory backends.
+
+**artifacts_root** (2026-04-12): `CompositeBackend` and `FilesystemMiddleware` accept `artifacts_root` parameter for unified artifact storage path.
+
+**Permissions System** (2026-04-12): `FilesystemPermission` rules + `_PermissionMiddleware`. Declarative filesystem access control with first-match-wins semantics. See Security section above.
+
+**Harness Profiles** (2026-04-12): `_HarnessProfile` registry replaces hardcoded provider branches. `_ToolExclusionMiddleware` strips provider-incompatible tools. See Harness Profiles section above.
+
+**CLI Deploy** (2026-04-12): `deepagents deploy` command for LangSmith Deployment. Reads `deepagents.toml`, bundles dependencies, generates LangGraph server config.
+
+**CLI /notifications** (2026-04-12): `/notifications` command for configuring tool call notification preferences.
+
+**CLI Provider Credential Fail-Fast** (2026-04-12): Missing provider API keys now cause immediate error instead of silent failure.
+
+**CLI AGENTS.md Dedup** (2026-04-12): Fixed bug where `AGENTS.md` content was injected into system prompt twice.
+
+**Eval Category Refactor** (2026-04-12): 14 old eval categories consolidated to 8: `conversation`, `external_benchmarks`, `file_operations`, `memory`, `retrieval`, `summarization`, `tool_use`, `unit_test`. Radar chart includes `conversation` dimension.
 
 **Message ID Requirement**: All messages must have IDs for proper state management (see `_ensure_message_ids` in summarization).
 
@@ -456,3 +525,9 @@ Scopes: `deepagents`, `sdk`, `deepagents-cli`, `cli`, `harbor`, `acp`, `examples
 - **API Reference (Converter 章节)**: `docs/api/API_REFERENCE.md`
 - **Design Document**: `docs/unified_file_reader/UNIFIED_FILE_READER_DESIGN.md`
 - **Migration Plan V3.1**: `docs/tmp/converter-migration-plan-v3.md`
+
+**Round 13 Documentation** (2026-04-12):
+- **Merge Progress**: `docs/upstream_merge/ROUND13_PROGRESS.md`
+- **Risk Assessment**: `docs/upstream_merge/ROUND13_RISK_ASSESSMENT.md`
+- **SDK Upgrade Guide (Round 13)**: `docs/api/SDK_UPGRADE_NOTICE_ROUND13.md`
+- **Deploy Guide**: `deepagents-deploy.md`
