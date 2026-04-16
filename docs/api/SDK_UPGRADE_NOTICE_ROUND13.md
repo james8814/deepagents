@@ -462,6 +462,7 @@ CLI 内置通知设置 UI，配置工具调用时的通知偏好。
 | 4 | `ls_info()` / `glob_info()` / `grep_raw()` | `ls()` / `glob()` / `grep()` | Round 10 |
 | 5 | `SubAgentMiddleware(default_model=...)` | `subagents=[...]` | Round 11 |
 | 6 | `FilesystemMiddleware(backend=callable)`（backend factory callable） | 直接传 `BackendProtocol` 实例（例如 `StateBackend()`） | Round 10 |
+| 7 | `StateBackend(runtime)`（构造函数传入 runtime） | 直接使用 `StateBackend()`（runtime 参数会被忽略且发出告警） | Round 10 |
 
 ---
 
