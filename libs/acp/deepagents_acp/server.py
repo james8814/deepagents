@@ -39,7 +39,6 @@ from acp.schema import (
     PlanEntry,
     PromptCapabilities,
     ResourceContentBlock,
-    SessionConfigOption,
     SessionConfigOptionSelect,
     SessionConfigSelectOption,
     SessionModeState,
@@ -49,6 +48,13 @@ from acp.schema import (
     ToolCallUpdate,
     ToolKind,
 )
+
+try:
+    from acp.schema import SessionConfigOption
+except ImportError:
+    # agent-client-protocol >=0.9.0 removed the SessionConfigOption wrapper;
+    # config options are now bare SessionConfigOptionSelect instances.
+    SessionConfigOption = None  # type: ignore[assignment,misc]
 from deepagents import create_deep_agent
 from deepagents.backends import CompositeBackend, FilesystemBackend, StateBackend
 from langgraph.checkpoint.memory import MemorySaver
@@ -136,14 +142,17 @@ class AgentServerACP(ACPAgent):
         """Store the client connection for sending session updates."""
         self._conn = conn
 
-    def _build_config_options(self, session_id: str) -> list[SessionConfigOption]:
+    def _build_config_options(
+        self,
+        session_id: str,
+    ) -> list[SessionConfigOptionSelect]:
         """Build the list of session configuration options.
 
         Returns a list combining mode and model selectors if available.
         Modes are mapped to config options with category='mode'.
         Models are exposed as config options with category='model'.
         """
-        config_options: list[SessionConfigOption] = []
+        config_options: list[SessionConfigOptionSelect] = []
 
         # Add mode selector if modes are configured
         if self._modes is not None:
@@ -157,18 +166,18 @@ class AgentServerACP(ACPAgent):
                 for mode in self._modes.available_modes
             ]
 
-            mode_config = SessionConfigOption(
-                root=SessionConfigOptionSelect(
-                    id="mode",
-                    name="Session Mode",
-                    description="Controls how the agent requests permission",
-                    category="mode",
-                    type="select",
-                    current_value=current_mode,
-                    options=mode_options,
-                )
+            mode_select = SessionConfigOptionSelect(
+                id="mode",
+                name="Session Mode",
+                description="Controls how the agent requests permission",
+                category="mode",
+                type="select",
+                current_value=current_mode,
+                options=mode_options,
             )
-            config_options.append(mode_config)
+            config_options.append(
+                SessionConfigOption(root=mode_select) if SessionConfigOption else mode_select,
+            )
 
         # Add model selector if models are configured
         if self._models is not None and len(self._models) > 0:
@@ -182,18 +191,18 @@ class AgentServerACP(ACPAgent):
                 for model in self._models
             ]
 
-            model_config = SessionConfigOption(
-                root=SessionConfigOptionSelect(
-                    id="model",
-                    name="Model",
-                    description="The LLM model to use for this session",
-                    category="model",
-                    type="select",
-                    current_value=current_model,
-                    options=model_options,
-                )
+            model_select = SessionConfigOptionSelect(
+                id="model",
+                name="Model",
+                description="The LLM model to use for this session",
+                category="model",
+                type="select",
+                current_value=current_model,
+                options=model_options,
             )
-            config_options.append(model_config)
+            config_options.append(
+                SessionConfigOption(root=model_select) if SessionConfigOption else model_select,
+            )
 
         return config_options
 
