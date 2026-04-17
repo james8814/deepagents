@@ -649,8 +649,7 @@ You have access to a skills library that provides specialized capabilities and d
 Skills follow a **progressive disclosure** pattern - you see their name and description above, but only read full instructions when needed:
 
 1. **Recognize when a skill applies**: Check if the user's task matches a skill's description
-2. **Read the skill's full instructions**: Use `read_file` on the path shown in the skill list above.
-   Pass `limit=1000` since the default of 100 lines is too small for most skill files.
+2. **Read the skill's full instructions**: {skill_loading_instruction}
 3. **Follow the skill's instructions**: SKILL.md contains step-by-step workflows, best practices, and examples
 4. **Access supporting files**: Skills may include helper scripts, configs, or reference docs - use absolute paths
 
@@ -667,7 +666,7 @@ Skills may contain Python scripts or other executable files. Always use absolute
 User: "Can you research the latest developments in quantum computing?"
 
 1. Check available skills -> See "web-research" skill with its path
-2. Read the full skill file: `read_file(path, limit=1000)`
+2. {skill_loading_example}
 3. Follow the skill's research workflow (search -> organize -> synthesize)
 4. Use any helper scripts with absolute paths
 
@@ -726,7 +725,22 @@ class SkillsMiddleware(AgentMiddleware):
         """
         self._backend = backend
         self.sources = sources
-        self.system_prompt_template = SKILLS_SYSTEM_PROMPT
+        # Condition the prompt on whether dynamic tools are exposed.
+        # V2 (expose_dynamic_tools=True): guide the LLM to use `load_skill("name")`.
+        # V1 fallback (False): guide the LLM to use `read_file(path, limit=1000)`.
+        _v1_instruction = (
+            "Use `read_file` on the path shown in the skill list above. "
+            "Pass `limit=1000` since the default of 100 lines is too small for most skill files."
+        )
+        _v1_example = "Read the full skill file: `read_file(path, limit=1000)`"
+        _v2_instruction = "Use `load_skill(\"skill-name\")` to load the full instructions and discover resources"
+        _v2_example = "Load the skill: `load_skill(\"web-research\")`"
+        self.system_prompt_template = SKILLS_SYSTEM_PROMPT.format(
+            skills_locations="{skills_locations}",
+            skills_list="{skills_list}",
+            skill_loading_instruction=_v2_instruction if expose_dynamic_tools else _v1_instruction,
+            skill_loading_example=_v2_example if expose_dynamic_tools else _v1_example,
+        )
         self._max_loaded_skills = max_loaded_skills
         self._expose_dynamic_tools = expose_dynamic_tools
         self._allowed_skills = {s.strip().lower() for s in allowed_skills} if allowed_skills else None
@@ -819,7 +833,10 @@ class SkillsMiddleware(AgentMiddleware):
                     skill_lines.append(f"  -> Resources: {resource_summary}")
 
             if name not in loaded_set:
-                skill_lines.append(f'  -> Use `load_skill("{name}")` to read full instructions')
+                if self._expose_dynamic_tools:
+                    skill_lines.append(f'  -> Use `load_skill("{name}")` to read full instructions')
+                else:
+                    skill_lines.append(f"  -> Use `read_file` on the path above (with `limit=1000`) to read full instructions")
 
             lines.append("\n".join(skill_lines))
 

@@ -807,7 +807,8 @@ def test_format_skills_list_single_skill() -> None:
     result = middleware._format_skills_list(skills, loaded=[], resources={})
     assert "web-research" in result
     assert "Research topics on the web" in result
-    assert 'Use `load_skill("web-research")`' in result
+    # V1 mode (expose_dynamic_tools=False): guide to use read_file, not load_skill
+    assert "read_file" in result
 
 
 def test_format_skills_list_multiple_skills_multiple_registries() -> None:

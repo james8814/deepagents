@@ -69,17 +69,16 @@ You have access to a skills library that provides specialized capabilities and d
 **Available Skills:**
 
 - **web-research**: Structured approach to conducting thorough web research on any topic
-  -> Use `load_skill("web-research")` to read full instructions
+  -> Use `read_file` on the path above (with `limit=1000`) to read full instructions
 - **code-review**: Systematic code review process following best practices and style guides
-  -> Use `load_skill("code-review")` to read full instructions
+  -> Use `read_file` on the path above (with `limit=1000`) to read full instructions
 
 **How to Use Skills (Progressive Disclosure):**
 
 Skills follow a **progressive disclosure** pattern - you see their name and description above, but only read full instructions when needed:
 
 1. **Recognize when a skill applies**: Check if the user's task matches a skill's description
-2. **Read the skill's full instructions**: Use `read_file` on the path shown in the skill list above.
-   Pass `limit=1000` since the default of 100 lines is too small for most skill files.
+2. **Read the skill's full instructions**: Use `read_file` on the path shown in the skill list above. Pass `limit=1000` since the default of 100 lines is too small for most skill files.
 3. **Follow the skill's instructions**: SKILL.md contains step-by-step workflows, best practices, and examples
 4. **Access supporting files**: Skills may include helper scripts, configs, or reference docs - use absolute paths
 
