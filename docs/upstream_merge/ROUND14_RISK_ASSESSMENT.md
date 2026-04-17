@@ -9,7 +9,7 @@
 
 ## 总体风险等级: 🟢 低
 
-**原因**: 本轮与 Round 13（114 commits, 3 新子系统）相比，变更量减半，无架构级重构。核心变更集中在 SubAgent 结构化输出（新能力）、CLI user scoped memory（部署增强）、依赖升级 (langsmith 0.6→0.7.31)，无大规模 graph.py 或中间件栈重构。
+**原因**: 本轮与 Round 13（114 commits, 3 新子系统）相比，变更量减半，无架构级重构。核心变更集中在 SubAgent 结构化输出（新能力）、CLI user scoped memory（部署增强）、`model=None` 废弃预告（仅 warning）、依赖升级（langsmith 0.6→0.7.31）。中间件栈不变（仍 14 层），graph.py 改动面小（+12 行）。
 
 **对比**:
 
@@ -73,7 +73,9 @@
 | E2 | `855ef82b` | release(deepagents-cli): 0.0.38 | **不 cherry-pick** — 保留本地 0.0.34 |
 | E3 | (无 deepagents-cli 0.0.37 变更) | — | — |
 
-### Phase F: 依赖更新 (24 commits) — 🟢 低
+### Phase F: 依赖更新 (24 commits) — 🟡 中风险
+
+**原因**: langsmith `0.6.x/0.7.x → 0.7.31` 跨多个 minor，影响面覆盖 sandbox client / CLI / deploy 相关路径。虽然多数为 lockfile 机械更新，但需要增加 smoke 验证来降低“运行时才暴雷”的风险。
 
 **langsmith 0.6.x/0.7.x → 0.7.31** (11 个子包):
 
@@ -118,7 +120,10 @@
 
 **本地状态**: 本地 V2 skills.py 有 1197 行（vs 上游 ~834 行），**相同 prompt 文本在本地 L651-652**。冲突是可预期的，但内容是纯 prompt 文本更新（添加 `limit=1000` 指南）。
 
-**解决方案**: 接受上游文本更新，保留本地 V2 的所有额外逻辑。
+**解决方案**: 条件化合并（避免本地 V2 的 `load_skill` 与上游 `read_file(limit=1000)` 形成双通道指令冲突）:
+
+- 当 `skills_expose_dynamic_tools=False`（V1/fallback 模式）：接受上游 “读 SKILL.md 时使用 `limit=1000`” 的指令
+- 当 `skills_expose_dynamic_tools=True`（本地 V2 primary 模式）：保留并优先引导使用 `load_skill(name)`（减少 prompt 指令与工具路径分叉）
 
 ### 冲突 2: `149df415` `model=None` 废弃 (🟡)
 
@@ -126,7 +131,10 @@
 
 **本地状态**: 本地 graph.py 已经从 L114 开始大量定制（helper 函数、harness profile 集成、permissions）。`_model_spec` 行应该位置一致，但**需要验证**。
 
-**解决方案**: 手动在正确位置插入 `warnings.warn()` 块。
+**解决方案**:
+
+- 手动在正确位置插入 `warnings.warn()` 块（仅 warning，不改行为）
+- `pyproject.toml` 的 `filterwarnings` 必须与 graph.py 的 warning 同步合入（否则可能引入测试/CI 的 warning 污染或严格告警失败）
 
 ### 冲突 3: `6e57731f` SubAgent `response_format` (🟡)
 
@@ -146,40 +154,56 @@
 
 ## 合并方案
 
-### 策略: 3 Phase + 单段合入（无需 Gate 系统）
+### 策略: 3 Phase + Gate 1（Phase 1 后统一验收）
 
-**原因**: Round 14 无高风险 SDK 架构变更，可采用线性 cherry-pick。
+**原因**: Round 14 无高风险 SDK 架构变更，适合线性推进；但 Phase 1 引入大规模依赖升级（langsmith 跨多个 minor）与跨包 lockfile 变更，需要增加一个“可量化 Gate”来保证落地质量。
 
 ```text
-Phase 1: 低风险批量（除 Phase 2 的 4 个 SDK commits 外，其余非 release commits；实际数量以 cherry-pick 列表为准）
-  - Phase B: CLI（含 user scoped memory；其中 1 个版本 bump commit 跳过）
+Phase 1a: Deps bump 批量（24 commits，纯机械）
+  - Phase F: 所有 deps 相关（langsmith/pytest/pillow/python-multipart/uv）
+  - 冲突策略: `git checkout --theirs .`（与 Round 13 一致）
+  → checkpoint-round14-phase1a-deps-done
+
+Phase 1b: CLI/REPL 功能（11 commits）
+  - Phase B: CLI（含 `23bfca6e` user scoped memory；跳过 `482f3810`）
   - Phase C: REPL
+  → checkpoint-round14-phase1b-cli-done
+
+Phase 1c: Evals/ACP/CI（其余低风险 commits）
   - Phase D: Evals/ACP/Deepagents
-  - Phase F: 依赖更新（多包 uv.lock）
   - Phase G: CI/基础设施
-  - Phase E: 跳过 3 个 release/配套版本 bump commits
-  → checkpoint-round14-phase1-done
+  → checkpoint-round14-phase1c-infra-done
+
+Gate 1: 全量测试 + langsmith sandbox smoke + 跨包 relock 检查
+  → checkpoint-round14-gate1-done
 
 Phase 2: SDK 核心变更 (4 commits) — 手动处理冲突
-  - A4: xfail langsmith sandbox (无冲突，先)
-  - A3: skill loading limit=1000（预期 prompt 冲突）
   - A1: deprecate model=None（graph.py 小插入）
   - A2: subagent response_format（subagents.py TypedDict 扩展）
+  - A4: xfail langsmith sandbox（如 Phase 1 已修复相关失败，可跳过此 commit）
+  - A3: skill prompt 条件化合并（最后处理，避免冲突扩大）
   → checkpoint-round14-phase2-done
 
 Phase 3: 验证 + 文档
   - 全量测试（SDK / CLI / Evals / ACP / REPL）
+  - 新功能 smoke / 集成测试补强（response_format 三策略、user memory 隔离、model=None warning）
   - 更新 CLAUDE.md (SubAgent.response_format, user scoped memory)
   - 更新 MEMORY.md (Round 14 状态)
-  - 编写 SDK_UPGRADE_NOTICE_ROUND14.md
+  - 编写 SDK_UPGRADE_NOTICE_ROUND14.md（外部团队升级说明）
 ```
 
-### Phase 1 退出条件
+### Gate 1 退出条件（Phase 1a/1b/1c 后统一验收）
 
 ```bash
 cd libs/deepagents && UV_LINK_MODE=copy uv run --group test pytest tests/unit_tests/ -q
 cd libs/cli && uv run --group test pytest tests/unit_tests/ --disable-socket --allow-unix-socket -q --timeout 30
 cd libs/evals && uv run --group test pytest tests/unit_tests/ -q --timeout 30
+cd libs/acp && uv run --group test pytest tests/ -q --timeout 30
+cd libs/repl && uv run --group test pytest tests/ -q --timeout 30
+
+python -c "from langsmith.sandbox import Sandbox, SandboxClient; print('OK')"
+
+cd libs/cli && uv lock --check
 ```
 
 **期望**:
@@ -187,6 +211,10 @@ cd libs/evals && uv run --group test pytest tests/unit_tests/ -q --timeout 30
 - SDK: 1251 passed (可能 +0, deps bump 不新增测试)
 - CLI: 2959 passed (可能 +0)
 - Evals: 239 passed (可能 +2, tool usage tasks)
+- ACP: 76 passed (可能 +0)
+- REPL: 59 passed (可能 +0)
+- langsmith sandbox import smoke: 打印 `OK`
+- `uv lock --check` 通过（CLI 仍能解析并 pin 到本地 SDK 0.5.0）
 - 无新增 fail
 
 ### Phase 2 退出条件
@@ -203,6 +231,8 @@ UV_LINK_MODE=copy uv run --group test pytest tests/unit_tests/middleware/convert
 # 新增上游特性验证
 UV_LINK_MODE=copy uv run --group test pytest tests/unit_tests/test_subagents.py -v  # structured output
 UV_LINK_MODE=copy uv run --group test pytest tests/unit_tests/test_graph.py -v -k "model_none or deprecat"  # model=None deprecation
+
+UV_LINK_MODE=copy uv run --group test pytest tests/unit_tests/test_graph.py -v -W error::DeprecationWarning -k "model_none or deprecat"
 ```
 
 **期望**:
@@ -213,15 +243,19 @@ UV_LINK_MODE=copy uv run --group test pytest tests/unit_tests/test_graph.py -v -
 ### 中风险项验收清单（架构师关心的“正确性边界”）
 
 - SubAgent `response_format`：父代理能稳定收到结构化 JSON（无论 tool/provider/auto 策略），并且不破坏既有 `permissions` / `skills_allowlist` 字段语义
-- skill prompt 更新：默认 `limit=1000` 指南被合入且只影响提示文本，不改变本地 V2 skills 的实际加载/解析逻辑
-- `model=None`：仅新增 `DeprecationWarning`，不改变默认 model 推断与 provider profile 绑定行为
-- CLI user scoped memory：确认每用户 memory 隔离（`/memories/user/AGENTS.md`）不会跨用户串写，且不会把用户内容写入 seed（仍应只把 `AGENTS.md` / `skills/` 作为 seed）
+- skill prompt 更新：采用条件化合并策略，V2 agent 优先引导 `load_skill(name)`，仅在 fallback（`skills_expose_dynamic_tools=False`）路径引导 `read_file(limit=1000)`；避免双通道指令冲突
+- `model=None`：仅新增 `DeprecationWarning`，不改变默认 model 推断与 provider profile 绑定行为；且 `pyproject.toml` 的 `filterwarnings` 已生效（`-W error::DeprecationWarning` 不应失败）
+- CLI user scoped memory：确认每用户 memory 隔离（`/memories/user/AGENTS.md`）不会跨用户串写，且不会把用户内容写入 seed（仍应只把 `AGENTS.md` / `skills/` 作为 seed）。另外需在 Round 14 升级说明中明确 `/memories/user/` 与 `FilesystemPermission` 的交互（权限规则可能导致写入被拒绝）
 
 ### Phase 3 退出条件
 
 - 所有 5 个包测试全绿
 - CLAUDE.md 更新：Middleware Stack 部分保持 14 层（本轮不变）；SubAgent 章节新增 `response_format` 字段文档；CLI 章节新增 user scoped memory
-- 外部团队升级说明（Round 14）交付
+- 新功能 smoke / 集成测试覆盖：
+  - SubAgent response_format 三策略（ToolStrategy / ProviderStrategy / AutoStrategy）最小链路验证
+  - user memory 命名空间隔离验证（deploy bundler 单测或最小集成链路）
+  - model=None 仅 warning 不 fail
+- 外部团队升级说明（Round 14）交付（包含 opt-in 条件、与 permissions 的交互警告、迁移示例）
 
 ---
 
@@ -229,10 +263,11 @@ UV_LINK_MODE=copy uv run --group test pytest tests/unit_tests/test_graph.py -v -
 
 | 阶段 | 时间 | 风险 |
 | --- | --- | --- |
-| Phase 1 批量 cherry-pick | 30-45 min | 🟢 |
+| Phase 1a/1b/1c 拆分执行 | 45-60 min | 🟡 |
+| Gate 1 验证 | 10-15 min | 🟡 |
 | Phase 2 SDK 手动冲突解决 | 45-60 min | 🟡 |
-| Phase 3 全量测试 + 文档 | 45-60 min | 🟢 |
-| **总计** | **2-2.75 h** | 🟡 |
+| Phase 3 全量测试 + 文档 | 60-75 min | 🟢 |
+| **总计** | **2.5-3.5 h** | 🟡 |
 
 对比 Round 13 (7-9 h), 本轮时间降低 70%。
 
@@ -241,8 +276,13 @@ UV_LINK_MODE=copy uv run --group test pytest tests/unit_tests/test_graph.py -v -
 ## 回滚策略
 
 ```bash
-# Phase 2 失败 → 回滚到 Phase 1 完成点
-git reset --hard checkpoint-round14-phase1-done
+# Gate 1 前失败 → 回滚到最近 sub-checkpoint
+git reset --hard checkpoint-round14-phase1a-deps-done
+git reset --hard checkpoint-round14-phase1b-cli-done
+git reset --hard checkpoint-round14-phase1c-infra-done
+
+# Phase 2 失败 → 回滚到 Gate 1 完成点
+git reset --hard checkpoint-round14-gate1-done
 
 # Phase 1 失败 → 回滚到 Round 13 完成点
 git reset --hard a9694a77
@@ -293,8 +333,8 @@ Phase 2 后必须验证以下本地特性未被破坏：
 | 等级 | 数量 | 代表 |
 | --- | --- | --- |
 | 🔴 高 | 0 | — |
-| 🟡 中 | 4 | skill prompt 冲突, model=None 警告, SubAgent response_format, user scoped memory |
-| 🟢 低 | 48 | CLI fixes, REPL, deps bump, CI, docs |
+| 🟡 中 | 5 | skill prompt 冲突, model=None 警告, SubAgent response_format, user scoped memory, langsmith 跨 minor deps bump |
+| 🟢 低 | 47 | CLI fixes, REPL, CI, docs 等 |
 
 ---
 
