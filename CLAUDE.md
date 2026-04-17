@@ -158,11 +158,13 @@ so explicit exclusion is required to prevent `InvalidUpdateError` with parallel 
 
 **General-Purpose Subagent**: Always created by default with its own middleware stack (TodoList, Filesystem, Summarization, AnthropicCache, PatchToolCalls).
 
+**SubAgent Structured Output** (2026-04-17): `SubAgent` TypedDict has `response_format: NotRequired[ResponseFormat[Any] | type | dict[str, Any]]` field. When specified, the subagent produces a `structured_response` which is JSON-serialized as the `ToolMessage` content (replacing default last-message extraction). Supports `ToolStrategy`, `ProviderStrategy`, `AutoStrategy`, bare Pydantic/dataclass types, and JSON Schema dicts.
+
 **Task Tool Flow**:
 1. Main agent calls `task(description, subagent_type)`
 2. `SubAgentMiddleware` filters state, injects `HumanMessage(description)`
 3. Sub-agent runs independently with its own middleware
-4. Final message extracted as `ToolMessage` returned to parent
+4. Final message extracted as `ToolMessage` returned to parent (or `structured_response` JSON if `response_format` is set)
 
 ### Async Sub-Agent Mechanism (`async_subagents.py`) — v0.5.0
 
@@ -478,6 +480,14 @@ Scopes: `deepagents`, `sdk`, `deepagents-cli`, `cli`, `harbor`, `acp`, `examples
 
 **Eval Category Refactor** (2026-04-12): 14 old eval categories consolidated to 8: `conversation`, `external_benchmarks`, `file_operations`, `memory`, `retrieval`, `summarization`, `tool_use`, `unit_test`. Radar chart includes `conversation` dimension.
 
+**SubAgent Structured Output** (2026-04-17): `SubAgent.response_format` field enables structured output from subagents. When a subagent produces a `structured_response`, it is JSON-serialized (`model_dump_json` / `dataclasses.asdict` / `json.dumps`) and returned as the `ToolMessage` content. Import: `from langchain.agents.structured_output import ResponseFormat`.
+
+**`model=None` Deprecation** (2026-04-17): `create_deep_agent(model=None)` now emits `DeprecationWarning`. The `model` parameter will change from `str | BaseChatModel | None` to `str | BaseChatModel` in a future release. `pyproject.toml` has `filterwarnings` to suppress in tests.
+
+**Skill Prompt Conditioning** (2026-04-17): `SKILLS_SYSTEM_PROMPT` is now parameterized by `expose_dynamic_tools`. V1 mode (`False`): prompt guides `read_file(path, limit=1000)`. V2 mode (`True`): prompt guides `load_skill("name")`. Eliminates dual-channel instruction conflict.
+
+**CLI User Scoped Memory** (2026-04-17): `deepagents deploy` supports per-user writable `AGENTS.md`. Enabled by creating `user/` directory in project root. Path: `/memories/user/AGENTS.md`, namespaced per `(assistant_id, user_id)`. Deploy-only feature (bundler + templates).
+
 **Message ID Requirement**: All messages must have IDs for proper state management (see `_ensure_message_ids` in summarization).
 
 **Backend Download vs Read**: Use `download_files()` for raw content (editing), `read()` returns line-numbered format (for LLM consumption).
@@ -531,3 +541,9 @@ Scopes: `deepagents`, `sdk`, `deepagents-cli`, `cli`, `harbor`, `acp`, `examples
 - **Risk Assessment**: `docs/upstream_merge/ROUND13_RISK_ASSESSMENT.md`
 - **SDK Upgrade Guide (Round 13)**: `docs/api/SDK_UPGRADE_NOTICE_ROUND13.md`
 - **Deploy Guide**: `deepagents-deploy.md`
+
+**Round 14 Documentation** (2026-04-17):
+
+- **Merge Progress**: `docs/upstream_merge/ROUND14_PROGRESS.md`
+- **Risk Assessment**: `docs/upstream_merge/ROUND14_RISK_ASSESSMENT.md`
+- **SDK Upgrade Guide (Round 14)**: `docs/api/SDK_UPGRADE_NOTICE_ROUND14.md`
