@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
     from pathlib import Path
 
 
@@ -56,6 +57,73 @@ def _clear_langsmith_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "DEEPAGENTS_CLI_LANGCHAIN_TRACING_V2",
     ):
         monkeypatch.delenv(key, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _register_theme_variables(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make app-specific CSS variables available to all test `App` instances.
+
+    Production code defines these in `DeepAgentsApp.get_theme_variable_defaults`
+    but many tests use lightweight `App[None]` subclasses that lack the override.
+    Patching the base class ensures `$mode-bash`, `$mode-command` resolve
+    everywhere without requiring each test app to opt in.
+    """
+    from textual.app import App
+
+    from deepagents_cli.theme import get_css_variable_defaults
+
+    original = App.get_theme_variable_defaults
+    custom = get_css_variable_defaults(dark=True)
+
+    def _with_custom_vars(self: App) -> dict[str, str]:
+        base = original(self)
+        base.update(custom)
+        return base
+
+    monkeypatch.setattr(App, "get_theme_variable_defaults", _with_custom_vars)
+
+
+@pytest.fixture(autouse=True)
+def _provide_app_context() -> Generator[None]:
+    """Set Textual's `active_app` context var for sync widget tests.
+
+    Many unit tests construct widgets and call `compose()` directly without a
+    running Textual app. Widget code that calls `self.app` (e.g., for
+    theme-aware color lookups) needs a valid app in the context. This fixture
+    provides a minimal `App` instance with the default LangChain theme
+    registered so that `get_theme_colors()` returns the LC brand palette
+    (matching `DARK_COLORS`).
+    """
+    from textual._context import active_app
+    from textual.app import App
+    from textual.theme import Theme
+
+    from deepagents_cli import theme
+
+    app = App()
+    c = theme.DARK_COLORS
+    app.register_theme(
+        Theme(
+            name="langchain",
+            primary=c.primary,
+            secondary=c.secondary,
+            accent=c.accent,
+            foreground=c.foreground,
+            background=c.background,
+            surface=c.surface,
+            panel=c.panel,
+            warning=c.warning,
+            error=c.error,
+            success=c.success,
+            dark=True,
+        )
+    )
+    app.theme = "langchain"
+    token = active_app.set(app)
+    try:
+        yield
+    finally:
+        active_app.reset(token)
 
 
 @pytest.fixture(autouse=True)
