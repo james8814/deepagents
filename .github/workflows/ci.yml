@@ -248,6 +248,17 @@ jobs:
       python-versions: '["3.11", "3.12", "3.13", "3.14"]'
       coverage-python-version: "3.12"
 
+  test-deepagents-windows:
+    name: "🧪 Test deepagents (Windows)"
+    needs: changes
+    if: needs.changes.outputs.deepagents == 'true' || github.event_name == 'push'
+    uses: ./.github/workflows/_test.yml
+    with:
+      working-directory: "libs/deepagents"
+      python-version: "3.13"
+      os: "windows-latest"
+      coverage: false
+
   test-repl:
     name: "🧪 Test repl"
     needs: changes
@@ -307,6 +318,7 @@ jobs:
       - lint-repl
       - lint-quickjs
       - test-deepagents
+      - test-deepagents-windows
       - test-cli
       - test-evals
       - test-daytona

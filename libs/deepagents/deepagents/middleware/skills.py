@@ -120,7 +120,8 @@ from langgraph.prebuilt import ToolRuntime
 from langgraph.types import Command
 from typing_extensions import TypedDict
 
-from deepagents.backends.protocol import LsResult
+from deepagents.backends.protocol import FILE_NOT_FOUND, FileDownloadResponse, LsResult
+from deepagents.backends.utils import to_posix_path
 from deepagents.middleware._utils import append_to_system_message
 
 logger = logging.getLogger(__name__)
@@ -480,6 +481,117 @@ def _parse_skill_metadata(  # noqa: C901
     )
 
 
+def _validate_metadata(
+    raw: object,
+    skill_path: str,
+) -> dict[str, str]:
+    """Validate and normalize the metadata field from YAML frontmatter.
+
+    YAML `safe_load` can return any type for the `metadata` key. This
+    ensures the values in `SkillMetadata` are always a `dict[str, str]` by
+    coercing via `str()` and rejecting non-dict inputs.
+
+    Args:
+        raw: Raw value from `frontmatter_data.get("metadata", {})`.
+        skill_path: Path to the `SKILL.md` file (for warning messages).
+
+    Returns:
+        A validated `dict[str, str]`.
+    """
+    if not isinstance(raw, dict):
+        if raw:
+            logger.warning(
+                "Ignoring non-dict metadata in %s (got %s)",
+                skill_path,
+                type(raw).__name__,
+            )
+        return {}
+    return {str(k): str(v) for k, v in raw.items()}
+
+
+def _format_skill_annotations(skill: SkillMetadata) -> str:
+    """Build a parenthetical annotation string from optional skill fields.
+
+    Combines license and compatibility into a comma-separated string for
+    display in the system prompt skill listing.
+
+    Args:
+        skill: Skill metadata to extract annotations from.
+
+    Returns:
+        Annotation string like `'License: MIT, Compatibility: Python 3.10+'`,
+            or empty string if neither field is set.
+    """
+    parts: list[str] = []
+    if skill.get("license"):
+        parts.append(f"License: {skill['license']}")
+    if skill.get("compatibility"):
+        parts.append(f"Compatibility: {skill['compatibility']}")
+    return ", ".join(parts)
+
+
+def _skill_metadata_from_response(
+    response: FileDownloadResponse,
+    skill_dir_path: str,
+    skill_md_path: str,
+) -> SkillMetadata | None:
+    """Decode a `SKILL.md` download response into `SkillMetadata` (or `None`).
+
+    Logs a warning on any non-expected failure so that a silently dropped
+    skill (parse error, invalid name, unreadable bytes) surfaces in logs
+    instead of vanishing from the system prompt without explanation.
+
+    Args:
+        response: The backend's download response for `skill_md_path`.
+        skill_dir_path: Backend path of the skill directory (used to derive
+            the expected `name` for validation).
+        skill_md_path: Backend path of the `SKILL.md` file (used in log
+            messages so operators can locate the offending skill).
+
+    Returns:
+        Parsed `SkillMetadata` on success, or `None` when the response carries
+            an error, the content is missing/non-UTF8, or frontmatter
+            parsing / name validation fails. All `None` returns except an
+            expected `file_not_found` emit a warning.
+    """
+    if response.error:
+        # `file_not_found` is the only expected miss (not every subdirectory
+        # is a skill). Everything else -- notably `is_directory` as returned
+        # by `FilesystemBackend.download_files` when the SKILL.md path is a
+        # directory, plus `permission_denied` / backend-specific errors --
+        # indicates a malformed or inaccessible skill and must surface.
+        if response.error != FILE_NOT_FOUND:
+            logger.warning(
+                "Cannot load SKILL.md at %s: %s; skipping",
+                skill_md_path,
+                response.error,
+            )
+        return None
+
+    if response.content is None:
+        logger.warning("Downloaded skill file %s has no content", skill_md_path)
+        return None
+
+    try:
+        content = response.content.decode("utf-8")
+    except UnicodeDecodeError as e:
+        logger.warning("Error decoding %s: %s", skill_md_path, e)
+        return None
+
+    directory_name = PurePosixPath(to_posix_path(skill_dir_path)).name
+    skill_metadata = _parse_skill_metadata(
+        content=content,
+        skill_path=skill_md_path,
+        directory_name=directory_name,
+    )
+    if skill_metadata is None:
+        logger.warning(
+            "Skill at %s failed metadata parse or name validation; skipping",
+            skill_md_path,
+        )
+    return skill_metadata
+
+
 def _list_skills(backend: BackendProtocol, source_path: str) -> list[SkillMetadata]:
     """List all skills from a backend source.
 
@@ -517,40 +629,16 @@ def _list_skills(backend: BackendProtocol, source_path: str) -> list[SkillMetada
     # For each skill directory, check if SKILL.md exists and download it
     skill_md_paths = []
     for skill_dir_path in skill_dirs:
-        # Construct SKILL.md path using PurePosixPath for safe, standardized path operations
-        skill_dir = PurePosixPath(skill_dir_path)
+        skill_dir = PurePosixPath(to_posix_path(skill_dir_path))
         skill_md_path = str(skill_dir / "SKILL.md")
         skill_md_paths.append((skill_dir_path, skill_md_path))
 
     paths_to_download = [skill_md_path for _, skill_md_path in skill_md_paths]
     responses = backend.download_files(paths_to_download)
 
-    # Parse each downloaded SKILL.md
     for (skill_dir_path, skill_md_path), response in zip(skill_md_paths, responses, strict=True):
-        if response.error:
-            # Skill doesn't have a SKILL.md, skip it
-            continue
-
-        if response.content is None:
-            logger.warning("Downloaded skill file %s has no content", skill_md_path)
-            continue
-
-        try:
-            content = response.content.decode("utf-8")
-        except UnicodeDecodeError as e:
-            logger.warning("Error decoding %s: %s", skill_md_path, e)
-            continue
-
-        # Extract directory name from path using PurePosixPath
-        directory_name = PurePosixPath(skill_dir_path).name
-
-        # Parse metadata
-        skill_metadata = _parse_skill_metadata(
-            content=content,
-            skill_path=skill_md_path,
-            directory_name=directory_name,
-        )
-        if skill_metadata:
+        skill_metadata = _skill_metadata_from_response(response, skill_dir_path, skill_md_path)
+        if skill_metadata is not None:
             skills.append(skill_metadata)
 
     return skills
@@ -593,40 +681,16 @@ async def _alist_skills(backend: BackendProtocol, source_path: str) -> list[Skil
     # For each skill directory, check if SKILL.md exists and download it
     skill_md_paths = []
     for skill_dir_path in skill_dirs:
-        # Construct SKILL.md path using PurePosixPath for safe, standardized path operations
-        skill_dir = PurePosixPath(skill_dir_path)
+        skill_dir = PurePosixPath(to_posix_path(skill_dir_path))
         skill_md_path = str(skill_dir / "SKILL.md")
         skill_md_paths.append((skill_dir_path, skill_md_path))
 
     paths_to_download = [skill_md_path for _, skill_md_path in skill_md_paths]
     responses = await backend.adownload_files(paths_to_download)
 
-    # Parse each downloaded SKILL.md
     for (skill_dir_path, skill_md_path), response in zip(skill_md_paths, responses, strict=True):
-        if response.error:
-            # Skill doesn't have a SKILL.md, skip it
-            continue
-
-        if response.content is None:
-            logger.warning("Downloaded skill file %s has no content", skill_md_path)
-            continue
-
-        try:
-            content = response.content.decode("utf-8")
-        except UnicodeDecodeError as e:
-            logger.warning("Error decoding %s: %s", skill_md_path, e)
-            continue
-
-        # Extract directory name from path using PurePosixPath
-        directory_name = PurePosixPath(skill_dir_path).name
-
-        # Parse metadata
-        skill_metadata = _parse_skill_metadata(
-            content=content,
-            skill_path=skill_md_path,
-            directory_name=directory_name,
-        )
-        if skill_metadata:
+        skill_metadata = _skill_metadata_from_response(response, skill_dir_path, skill_md_path)
+        if skill_metadata is not None:
             skills.append(skill_metadata)
 
     return skills
@@ -794,7 +858,7 @@ class SkillsMiddleware(AgentMiddleware):
         """Format skills locations for display in system prompt."""
         locations = []
         for i, source_path in enumerate(self.sources):
-            name = PurePosixPath(source_path.rstrip("/")).name.capitalize()
+            name = PurePosixPath(to_posix_path(source_path).rstrip("/")).name.capitalize()
             suffix = " (higher priority)" if i == len(self.sources) - 1 else ""
             locations.append(f"**{name} Skills**: `{source_path}`{suffix}")
         return "\n".join(locations)
