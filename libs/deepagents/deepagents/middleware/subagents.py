@@ -1,11 +1,12 @@
 """Middleware for providing subagents to an agent via a `task` tool."""
 
+import contextlib
 import dataclasses
 import json
 import logging
 import os
 import warnings
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Generator, Sequence
 from typing import Any, NotRequired, TypedDict, cast
 
 from langchain.agents import create_agent
@@ -18,6 +19,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import Runnable
 from langchain_core.tools import StructuredTool
 from langgraph.types import Command
+from langsmith.run_helpers import get_tracing_context, tracing_context
 from pydantic import BaseModel, Field
 
 from deepagents.backends.protocol import BackendFactory, BackendProtocol
@@ -489,6 +491,27 @@ class _SubagentSpec(TypedDict):
     runnable: Runnable
 
 
+@contextlib.contextmanager
+def _subagent_tracing_context() -> Generator[None, None, None]:
+    """Context manager that tags subagent runs with `ls_agent_type="subagent"`.
+
+    Sets `ls_agent_type` on the langsmith tracing context `metadata`, which is
+    propagated to LangSmith runs. This mirrors
+    langchain's `ls_agent_type="root"` tagging behavior.
+
+    Forwards all other current tracing-context fields (parent, client, tags,
+    etc.) unchanged so this wrapper does not clobber the enclosing context.
+    """
+    current = get_tracing_context()
+    merged_metadata = {**(current.get("metadata") or {}), "ls_agent_type": "subagent"}
+    # Pass every field from the current tracing context through to
+    # `tracing_context` so we don't accidentally clobber fields that may be
+    # added to langsmith in the future. The only change is `metadata`.
+    kwargs: dict[str, Any] = {**current, "metadata": merged_metadata}
+    with tracing_context(**kwargs):
+        yield
+
+
 def _build_task_tool(  # noqa: C901
     subagents: list[_SubagentSpec],
     task_description: str | None = None,
@@ -569,18 +592,20 @@ def _build_task_tool(  # noqa: C901
         # Stream SubAgent execution to emit real-time progress events.
         # Falls back to invoke() for runnables that don't support stream_mode
         # (e.g., RunnableLambda used as CompiledSubAgent).
+        # Wrapped in _subagent_tracing_context() to set ls_agent_type tag for LangSmith.
         result = None
-        try:
-            for chunk in subagent.stream(subagent_state, stream_mode="values"):
-                result = chunk
-                runtime.stream_writer(_extract_stream_progress(chunk, subagent_type))
-        except TypeError as err:
-            if "stream_mode" in str(err) or "unexpected keyword argument" in str(err):
-                result = None
-            else:
-                raise
-        if result is None:
-            result = subagent.invoke(subagent_state)
+        with _subagent_tracing_context():
+            try:
+                for chunk in subagent.stream(subagent_state, stream_mode="values"):
+                    result = chunk
+                    runtime.stream_writer(_extract_stream_progress(chunk, subagent_type))
+            except TypeError as err:
+                if "stream_mode" in str(err) or "unexpected keyword argument" in str(err):
+                    result = None
+                else:
+                    raise
+            if result is None:
+                result = subagent.invoke(subagent_state)
         return _return_command_with_state_update(result, runtime.tool_call_id)
 
     async def atask(
@@ -597,39 +622,41 @@ def _build_task_tool(  # noqa: C901
         subagent, subagent_state = _validate_and_prepare_state(subagent_type, description, runtime)
         # Stream SubAgent execution to emit real-time progress events.
         # Falls back to ainvoke() for runnables that don't support stream_mode.
+        # Wrapped in _subagent_tracing_context() to set ls_agent_type tag for LangSmith.
         result = None
         chunk_count = 0
         stream_writer_count = 0
-        try:
-            async for chunk in subagent.astream(subagent_state, stream_mode="values"):
-                chunk_count += 1
-                result = chunk
-                runtime.stream_writer(_extract_stream_progress(chunk, subagent_type))
-                stream_writer_count += 1
-        except TypeError as err:
-            if "stream_mode" in str(err) or "unexpected keyword argument" in str(err):
+        with _subagent_tracing_context():
+            try:
+                async for chunk in subagent.astream(subagent_state, stream_mode="values"):
+                    chunk_count += 1
+                    result = chunk
+                    runtime.stream_writer(_extract_stream_progress(chunk, subagent_type))
+                    stream_writer_count += 1
+            except TypeError as err:
+                if "stream_mode" in str(err) or "unexpected keyword argument" in str(err):
+                    if _ENABLE_SUBAGENT_STREAM_DIAGNOSTICS:
+                        logger.warning(
+                            "[DIAG] astream fallback triggered: %s | subagent=%s | runnable_type=%s",
+                            str(err),
+                            subagent_type,
+                            type(subagent).__name__,
+                        )
+                    result = None
+                else:
+                    raise
+            finally:
                 if _ENABLE_SUBAGENT_STREAM_DIAGNOSTICS:
-                    logger.warning(
-                        "[DIAG] astream fallback triggered: %s | subagent=%s | runnable_type=%s",
-                        str(err),
+                    logger.info(
+                        "[DIAG] atask complete | subagent=%s | runnable_type=%s | chunk_count=%d | stream_writer_count=%d | had_result=%s",
                         subagent_type,
                         type(subagent).__name__,
+                        chunk_count,
+                        stream_writer_count,
+                        result is not None,
                     )
-                result = None
-            else:
-                raise
-        finally:
-            if _ENABLE_SUBAGENT_STREAM_DIAGNOSTICS:
-                logger.info(
-                    "[DIAG] atask complete | subagent=%s | runnable_type=%s | chunk_count=%d | stream_writer_count=%d | had_result=%s",
-                    subagent_type,
-                    type(subagent).__name__,
-                    chunk_count,
-                    stream_writer_count,
-                    result is not None,
-                )
-        if result is None:
-            result = await subagent.ainvoke(subagent_state)
+            if result is None:
+                result = await subagent.ainvoke(subagent_state)
         return _return_command_with_state_update(result, runtime.tool_call_id)
 
     return StructuredTool.from_function(
