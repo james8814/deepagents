@@ -36,13 +36,13 @@ def _warm_model_caches() -> None:
 def _clear_langsmith_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Prevent LangSmith env vars loaded from .env from leaking into tests.
 
-    ``dotenv.load_dotenv()`` runs at ``deepagents_cli.config`` import time and
-    may inject ``LANGSMITH_*`` variables from a local ``.env`` file.  These
-    cause spurious failures in unit tests that run with ``--disable-socket``
+    `dotenv.load_dotenv()` runs at `deepagents_cli.config` import time and
+    may inject `LANGSMITH_*` variables from a local `.env` file.  These
+    cause spurious failures in unit tests that run with `--disable-socket`
     because the LangSmith client attempts real HTTP requests.
 
     Each test that *needs* LangSmith variables should set them explicitly via
-    ``monkeypatch.setenv`` or ``patch.dict("os.environ", ...)``.
+    `monkeypatch.setenv` or `patch.dict("os.environ", ...)`.
     """
     for key in (
         "LANGSMITH_API_KEY",
@@ -130,8 +130,8 @@ def _provide_app_context() -> Generator[None]:
 def _isolate_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Redirect ChatInput history to a temp file.
 
-    Without this, every test that mounts a ``ChatInput`` widget writes to the
-    real ``~/.deepagents/history.jsonl``, causing duplicate/stale entries that
+    Without this, every test that mounts a `ChatInput` widget writes to the
+    real `~/.deepagents/history.jsonl`, causing duplicate/stale entries that
     persist across test runs and branch switches.
     """
     monkeypatch.setattr(
@@ -141,14 +141,15 @@ def _isolate_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _isolate_sessions_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Redirect the global sessions DB to a temp file.
+def _clear_kitty_kbd_probe_cache() -> None:
+    """Reset the `functools.cache` on the kitty-keyboard-protocol probe.
 
-    The CLI stores thread state in `~/.deepagents/sessions.db`. In sandboxed
-    test environments, touching the real home directory can fail or be blocked,
-    causing the overall test run to exit non-zero even when all tests pass.
+    The probe is cached for the lifetime of the process in production,
+    but stale state leaks across tests that patch the probe function or
+    rely on platform-specific behaviour. Clearing on every test keeps
+    results deterministic regardless of file order or `pytest-xdist`
+    sharding.
     """
-    monkeypatch.setattr(
-        "deepagents_cli.sessions.get_db_path",
-        lambda: tmp_path / "sessions.db",
-    )
+    from deepagents_cli.terminal_capabilities import supports_kitty_keyboard_protocol
+
+    supports_kitty_keyboard_protocol.cache_clear()
