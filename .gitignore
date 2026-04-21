@@ -197,20 +197,6 @@ cython_debug/
 # Cursor
 #  Cursor is an AI-powered code editor. `.cursorignore` specifies files/directories to
 #  exclude from AI features like autocomplete and code analysis. Recommended for sensitive data
-
-# macOS system files
-._*
-.DS_Store
-.AppleDouble
-.LSOverride
-Icon
-.DocumentRevisions-V100
-.fseventsd
-.Spotlight-V100
-.TemporaryItems
-.Trashes
-.VolumeIcon.icns
-.com.apple.timemachine.donotpresent
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
@@ -240,27 +226,4 @@ libs/cli/TEXTUAL_PROGRESS.md
 */tmp/.DS_Store
 
 CLAUDE.md
-
-# MCP config (contains API keys)
-.mcp.json
-
-# Temporary test and debug scripts
-check_*.py
-test_*.py
-debug_*.py
-hello*.py
-inspect_*.py
-find_*.py
-comprehensive_test.py
-run_attachment_tests.py
-subprocess_test.py
-
-# Test output files
-test_output.txt
-*_inspection_result.txt
-
-# Python version files (local environment)
-.python-version
-
-# Documentation drafts (may contain sensitive info)
-docs/design_review_report_*.md
+.worktrees/

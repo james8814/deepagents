@@ -43,20 +43,18 @@ Once deployed, open the agent in LangSmith and send it prompts like:
 
 ## Query via SDK
 
-Pass your Supabase JWT in the `Authorization` header — the deployment validates it and infers the user identity automatically:
+Pass `user_id` in `configurable` to scope per-user memory to the authenticated user:
 
 ```python
 from langgraph_sdk import get_client
 
-client = get_client(
-    url="https://<your-deployment-url>",
-    headers={"Authorization": "Bearer <your-supabase-jwt>"},
-)
+client = get_client(url="https://<your-deployment-url>")
 thread = await client.threads.create()
 
 async for chunk in client.runs.stream(
     thread["thread_id"], "agent",
     input={"messages": [{"role": "user", "content": "Write a tweet about AI agents"}]},
+    config={"configurable": {"user_id": "user-123"}},
     stream_mode="messages",
 ):
     print(chunk.data, end="", flush=True)
