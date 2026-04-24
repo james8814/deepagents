@@ -1,6 +1,6 @@
 [project]
 name = "deepagents"
-version = "0.5.0"
+version = "0.5.3"
 
 description = "General purpose 'deep agent' with sub-agent spawning, todo list capabilities, and mock file system. Built on LangGraph."
 readme = "README.md"
@@ -20,8 +20,8 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "langchain-core>=1.2.19,<2.0.0",
-    "langsmith>=0.3.0",
+    "langchain-core>=1.2.27,<2.0.0",
+    "langsmith>=0.7.35",
     "langchain>=1.2.15,<2.0.0",
     "langchain-anthropic>=1.4.0,<2.0.0",
     "langchain-google-genai>=4.2.1,<5.0.0",
@@ -37,15 +37,6 @@ Issues = "https://github.com/langchain-ai/deepagents/issues"
 Twitter = "https://x.com/LangChain"
 Slack = "https://www.langchain.com/join-community"
 Reddit = "https://www.reddit.com/r/LangChain/"
-
-[project.optional-dependencies]
-converters = [
-  "pdfplumber>=0.10.0",
-  "python-docx>=1.0.0",
-  "openpyxl>=3.1.0",
-  "python-pptx>=0.6.23",
-  "puremagic>=1.20",
-]
 
 
 [dependency-groups]
@@ -92,11 +83,6 @@ ignore = [
     "SLF001",  # Access to a private member of an external class
     "PLR0913", # Too many arguments to function definition
     "PLC0414", # Import alias does not rename original package — conflicts with type-checker re-export conventions
-    "PLR0915", # Too many statements — complex agent factory function requires many configuration branches
-    "EM101",   # Exception must not use string literal — overly strict for clear error messages
-    "EM102",   # Exception must not use f-string — overly strict for dynamic error messages
-    "ARG002",  # Unused method argument — common in base classes and protocols
-    "D301",    # Use r""" if any backslashes — conflicts with Google docstring convention examples
 ]
 unfixable = ["B028"]  # Rules that shouldn't be auto-fixed
 extend-safe-fixes = ["PLR6201"]
@@ -137,63 +123,6 @@ ignore-var-parameters = true
     "BLE001",  # Blind exception catch — resilience in standalone scripts
     "INP001",  # Missing `__init__.py` — scripts are standalone
 ]
-# Converters: logging and utility code — pragmatic rules relaxation
-"deepagents/middleware/converters/**/*.py" = [
-    "G004",    # Logging f-string — practical for structured messages
-    "PLR2004", # Magic values — threshold constants are domain-specific
-    "RUF005",  # List unpacking — concatenation clearer for simple cases
-    "PLC0415", # Import at top-level — lazy imports for optional dependencies
-    "C901",    # Function complexity — document converters are inherently complex
-    "PLR0912", # Too many branches — document element type handling
-    "BLE001",  # Broad exception — catch all PIL/document parsing errors
-    "RUF012",  # Mutable default — class-level constants are fine
-    "F841",    # Unused variable — kept for debugging/error context
-    "TRY003",  # Long exception message — clear user-facing errors are helpful
-    "ANN001",  # Missing type annotation — legacy converter code
-    "I001",    # Unsorted imports — pragmatic organization is clearer
-    "N806",    # Variable naming — converter class names intentionally capitalized
-    "B009",    # getattr with constant — dynamic module loading pattern
-    "PLW0603", # Global statement — singleton registry pattern
-    "PLR0911", # Too many returns — language detection heuristic branches
-    "SIM102",  # Nested if — clearer logic flow for detection
-    "SIM103",  # Return condition directly — explicit boolean is clearer
-]
-# Filesystem middleware: complex path handling and converter integration
-"deepagents/middleware/filesystem.py" = [
-    "PLC0415", # Import at top-level — circular import avoidance
-]
-# Subagents middleware: debug printing temporarily for troubleshooting
-"deepagents/middleware/subagents.py" = [
-    "T201",    # Print statements — feature flag controlled debug output
-    "RUF003",  # Ambiguous characters — Chinese comments for debug messages
-]
-# Upload adapter: type checking imports
-"deepagents/upload_adapter.py" = [
-    "TC003",   # Type checking block — threading uses Callable at runtime
-]
-# Skills middleware: complex list comprehension for skill items
-"deepagents/middleware/skills.py" = [
-    "E501",    # Line too long — list comprehension readability
-]
-# Patch tool calls: unused argument is intentional for interface compliance
-"deepagents/middleware/patch_tool_calls.py" = [
-    "RUF100",  # Unused noqa — keep for future lint config changes
-]
-# QA test file: test script without docstring requirement
-"qa_e2e_test_round5.py" = [
-    "D100",    # Missing docstring — test script
-]
-# Test conftest: nested if for dependency checking clarity
-"tests/integration_tests/conftest.py" = [
-    "SIM102",  # Nested if — clearer error message collection
-]
-# Backends: complex filesystem and sandbox logic
-"deepagents/backends/**/*.py" = [
-    "RUF100",  # Unused noqa — keep for future lint config changes
-]
-# exFAT volume doesn't preserve Unix permissions - executable bit stuck on
-"**/__init__.py" = ["EXE002"]
-"**/*.py" = ["EXE002"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -211,7 +140,5 @@ python-version = "3.11"
 [tool.ty.rules]
 # Most rules are enabled by default. Enable rules that are disabled by default:
 division-by-zero = "error"
-# Optional dependencies may not be installed — ignore for type checking
-unresolved-import = "ignore"
 # Add rules here to ignore, e.g.:
 # possibly-unresolved-reference = "ignore"
