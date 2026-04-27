@@ -980,7 +980,7 @@ class SkillsMiddleware(AgentMiddleware):
                 if self._expose_dynamic_tools:
                     skill_lines.append(f'  -> Use `load_skill("{name}")` to read full instructions')
                 else:
-                    skill_lines.append(f"  -> Use `read_file` on the path above (with `limit=1000`) to read full instructions")
+                    skill_lines.append("  -> Use `read_file` on the path above (with `limit=1000`) to read full instructions")
 
             lines.append("\n".join(skill_lines))
 
