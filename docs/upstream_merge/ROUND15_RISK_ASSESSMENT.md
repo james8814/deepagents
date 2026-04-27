@@ -33,16 +33,26 @@
 
 ### Phase A: SDK 核心变更 (8 commits) — 🟡 中风险
 
+> **架构师修正 (2026-04-27)**: 通过事实核查发现两个"变更簇"。`1699f3ae` 实际触及 graph.py +10 行，`e1c1d502` 实际触及 skills.py +127 行（commit message 仅说"Windows 路径修复"但同时重写了 `_list_skills`/`_alist_skills`/`_format_skills_locations`）。**所有触及 graph.py 或 skills.py 的 commits 必须聚簇统一处理**，避免同一文件被多次手工冲突。
+
+**变更簇映射**:
+
+| 文件 | 触及 commits | 累计行数 |
+| --- | --- | --- |
+| `graph.py` | `eb9fab96` + `1699f3ae` | +30 行 |
+| `skills.py` | `f7e37721` + `e1c1d502` | +268 行 |
+| `subagents.py` | `3bcc51a9` + `bd6ec6bc` | +69/-26 行 |
+
 | # | SHA | 描述 | 风险 | 文件 | 分析 |
 | --- | --- | --- | --- | --- | --- |
-| A1 | `eb9fab96` | **refactor(sdk): reorder `create_deep_agent` params by category** | 🟡 中 | graph.py +20/-20 | 上游把 `backend`/`interrupt_on` 提前到 `response_format` 之前。本地有 `state_schema`/`skills_expose_dynamic_tools` 额外参数，**重排冲突可控但需手动调整顺序** |
-| A2 | `f7e37721` | **feat(sdk,cli): labelled skill sources** | 🟡 中-高 | skills.py +141, agent.py +41, local_context.py +28 | 引入 `SkillSource = str \| tuple[str, str]` 类型别名 + label 推导 + 验证。本地 V2 SkillsMiddleware (1197 行) 与上游 (~834 行) 差异巨大，**手动合并** |
-| A3 | `1699f3ae` | perf(sdk): add cache breakpoint to MemoryMiddleware | 🟢 低 | memory.py | 性能优化，不改语义 |
-| A4 | `3bcc51a9` | feat(sdk): `ls_agent_type` configurable tag on subagent runs | 🟡 中 | subagents.py | 上游变更 + 本地 `_ENABLE_SUBAGENT_LOGGING` 可能交互 |
-| A5 | `bd6ec6bc` | fix(sdk): subagent tagging via configurable instead of tracing context | 🟢 低 | subagents.py | 与 A4 相关 |
-| A6 | `291aebe2` | fix(sdk): preserve CRLF line endings in sandbox edit | 🟢 低 | filesystem.py | 本地已有 CRLF 规范化逻辑（Round 12），需对齐 |
-| A7 | `e1c1d502` | fix(sdk): normalize Windows backslash paths before PurePosixPath | 🟢 低 | utils.py | path validation 微调 |
-| A8 | `87644b78` | chore(sdk): perf optimization for patching tool calls | 🟢 低 | patch_tool_calls.py | 性能优化 |
+| A1 | `eb9fab96` | **refactor(sdk): reorder `create_deep_agent` params by category** | 🔴 高 | graph.py +20/-20 | **graph.py 簇** — 上游把 `backend`/`interrupt_on` 提前到 `response_format` 之前。本地有 `state_schema`/`skills_expose_dynamic_tools` 额外参数 |
+| A2 | `f7e37721` | **feat(sdk,cli): labelled skill sources** | 🔴 高 | skills.py +141, agent.py +41, local_context.py +28 | **skills.py 簇** — 引入 `SkillSource = str \| tuple[str, str]` 类型别名 |
+| A3 | `1699f3ae` | perf(sdk): add cache breakpoint to MemoryMiddleware | 🟡 中 | **graph.py +10**, memory.py +37, tests +114 | **graph.py 簇** — 触及 graph.py（架构师修正：原标注"低风险仅 memory.py"错误） |
+| A4 | `3bcc51a9` | feat(sdk): `ls_agent_type` configurable tag on subagent runs | 🟡 中 | subagents.py +31 | subagents.py 簇 |
+| A5 | `bd6ec6bc` | fix(sdk): subagent tagging via configurable instead of tracing context | 🟢 低 | subagents.py +38/-26 | subagents.py 簇 |
+| A6 | `291aebe2` | fix(sdk): preserve CRLF line endings in sandbox edit | 🟢 低 | sandbox.py +44 | 独立文件 |
+| A7 | `e1c1d502` | fix(sdk): normalize Windows backslash paths before PurePosixPath | 🟡 中 | **skills.py +127**, filesystem.py, protocol.py, utils.py | **skills.py 簇** — 触及 skills.py（架构师修正：原标注"低风险仅 utils.py"错误） |
+| A8 | `87644b78` | chore(sdk): perf optimization for patching tool calls | 🟢 低 | patch_tool_calls.py +38 | 独立文件 |
 
 ### Phase B: CLI 变更 (28 commits) — 🟡 中风险
 
@@ -219,19 +229,20 @@ Phase 1c: ACP/Evals/CI（~30 commits）
 Gate 1: 全量测试 + langsmith 0.7.35 smoke + 跨包 relock
   → checkpoint-round15-gate1-done
 
-Phase 2a: SDK 低冲突变更（5 commits）
-  - A3 (1699f3ae) MemoryMiddleware cache breakpoint
-  - A4 (3bcc51a9) ls_agent_type configurable tag
-  - A5 (bd6ec6bc) subagent tagging via configurable
-  - A6 (291aebe2) CRLF preserve in sandbox
-  - A7 (e1c1d502) Windows backslash normalize
-  - A8 (87644b78) patch tool calls perf
+Phase 2a: SDK 文件级低冲突（4 commits，不触及 graph.py/skills.py）
+  - A4 (3bcc51a9) ls_agent_type configurable tag — subagents.py
+  - A5 (bd6ec6bc) subagent tagging via configurable — subagents.py
+  - A6 (291aebe2) CRLF preserve in sandbox — sandbox.py
+  - A8 (87644b78) patch tool calls perf — patch_tool_calls.py
   → checkpoint-round15-phase2a-done
 
-Phase 2b: SDK 高冲突变更（2 commits）+ harbor migration
-  - A1 (eb9fab96) graph.py 参数重排（手动调整位置）
-  - A2 (f7e37721) labelled skill sources（手动合并 V2）
-  - D5 (082b9008) LangSmith env snapshots
+Phase 2b: graph.py + skills.py 变更簇（4 commits）+ harbor migration（架构师修正后顺序）
+  顺序原则: 文件簇内按依赖关系排列，每个文件只 cherry-pick 一次冲突解决路径
+  - A3 (1699f3ae) MemoryMiddleware cache breakpoint — graph.py +10
+  - A1 (eb9fab96) graph.py 参数重排 — graph.py +20/-20（最后碰 graph.py）
+  - A7 (e1c1d502) Windows backslash + skills _list_skills 重写 — skills.py +127
+  - A2 (f7e37721) labelled skill sources — skills.py +141（最后碰 skills.py）
+  - D5 (082b9008) LangSmith env snapshots — harbor only
   → checkpoint-round15-phase2b-done
 
 Gate 2: 本地特性 11 项全检 + 新功能 smoke
@@ -280,6 +291,16 @@ UV_LINK_MODE=copy uv run --group test pytest tests/unit_tests/test_subagents.py 
 - `SkillsMiddleware(sources=[("/skills/user/", "User Claude")])` 正确生成 `**User Claude Skills**` header
 - `/agents` 命令在 CLI 中可用
 - `--startup-cmd` 和 `--max-turns` 标志生效
+
+**CLI Help drift 检查**（架构师补充要求）:
+
+```bash
+# CLI 顶层 help 是手维护的（ui.py），新增命令/标志后需对照 command_registry
+grep -E "/agents|--startup-cmd|--max-turns" libs/cli/deepagents_cli/ui.py
+grep -E "/agents|--startup-cmd|--max-turns" libs/cli/deepagents_cli/command_registry.py
+```
+
+期望: ui.py 的 help 文本包含全部新增命令/标志，与 command_registry 一致。否则需手动更新 ui.py 避免 help screen drift。
 
 ---
 
@@ -353,13 +374,13 @@ cb8c9d71  # release(deepagents-cli): 0.0.39
 
 ---
 
-## 风险统计
+## 风险统计（架构师修正后）
 
 | 等级 | 数量 | 代表 |
 | --- | --- | --- |
-| 🔴 高 | 0 | — |
-| 🟡 中 | 6 | graph.py 重排, labelled skill sources, harbor snapshots, ACP v0.9 schema, langsmith CLI snapshots, /agents switcher |
-| 🟢 低 | 73 | 其他 |
+| 🔴 高 | **2** | `eb9fab96` graph.py 重排（变更簇 Go/No-Go）, `f7e37721` labelled skill sources（变更簇 Go/No-Go） |
+| 🟡 中 | 6 | `1699f3ae` MemoryMiddleware (graph.py 簇), `e1c1d502` Windows path (skills.py 簇), `3bcc51a9`/`bd6ec6bc` SubAgent tagging, `082b9008` harbor snapshots, `2f86825e` ACP v0.9 schema, `a827cddf` CLI sandbox snapshots |
+| 🟢 低 | 71 | 其他 |
 
 ---
 
