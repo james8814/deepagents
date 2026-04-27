@@ -304,6 +304,94 @@ grep -E "/agents|--startup-cmd|--max-turns" libs/cli/deepagents_cli/command_regi
 
 ---
 
+### Gate 2 红线验收（架构师补充：Go/No-Go 退出条件）
+
+以下两条为 **强制 Go/No-Go**，不通过则 Phase 2b 视为失败，必须回滚到 `checkpoint-round15-phase2a-done`。
+
+#### 红线 1: graph.py wiring 完整性（针对 `eb9fab96`）
+
+合入 `eb9fab96` 后，本地额外参数（`skills_expose_dynamic_tools`、`state_schema`、`skills_allowlist`）必须**仍然被完整传递到下游构图逻辑**——不仅签名存在，wiring 路径也不能丢。
+
+**验收命令**:
+
+```bash
+cd libs/deepagents
+UV_LINK_MODE=copy uv run --group test pytest tests/unit_tests/test_graph_skills_flag_wiring.py -v
+```
+
+**必须全部通过的 6 个测试**:
+
+- `test_skills_expose_flag_wired_into_main_agent_middleware` — `skills_expose_dynamic_tools=True` 传递到主代理 SkillsMiddleware
+- `test_skills_expose_flag_defaults_false` — 默认值正确
+- `test_skills_expose_flag_wired_into_subagent_middleware` — 传递到 subagent SkillsMiddleware
+- `test_main_agent_skips_default_skills_when_user_provided` — 用户提供 SkillsMiddleware 时跳过默认注入
+- `test_subagent_skips_default_skills_when_user_provided` — subagent 同上
+- `test_subagent_skills_allowlist_is_wired` — `skills_allowlist` 传递到 SkillsMiddleware(allowed_skills=...)
+
+**附加 state_schema wiring 检查**（如 `test_graph_skills_flag_wiring.py` 未覆盖，需手动添加）:
+
+```python
+def test_state_schema_passed_to_create_agent():
+    """state_schema must be forwarded to underlying create_agent."""
+    class Custom(AgentState):
+        custom_field: NotRequired[str]
+    agent = create_deep_agent(model=fake_model, state_schema=Custom)
+    # Verify the compiled graph's input schema contains 'custom_field'
+    assert "custom_field" in agent.get_input_schema().model_fields
+```
+
+#### 红线 2: skills.py V1/V2 prompt 路径互斥（针对 `f7e37721` + Round 14 P1 回归防护）
+
+合入 labelled sources 后，必须验证 prompt 双通道隔离不被打破——这是 Round 14 P1 修复的核心成果，本轮严禁回归。
+
+**验收要求**:
+
+| 模式 | `expose_dynamic_tools` | prompt 必须包含 | prompt 必须**不**包含 |
+| --- | --- | --- | --- |
+| V1 (fallback) | `False` | `read_file`、`limit=1000` | `load_skill(` |
+| V2 (primary) | `True` | `load_skill(` | `read_file`、`limit=1000` |
+
+**新增测试**（必须随 Phase 2b 一起合入，作为红线测试）:
+
+```python
+def test_v1_mode_no_load_skill_in_prompt():
+    """V1 mode (expose_dynamic_tools=False): prompt must NOT mention load_skill."""
+    middleware = SkillsMiddleware(
+        backend=None, sources=["/skills/user/"], expose_dynamic_tools=False,
+    )
+    template = middleware.system_prompt_template
+    assert "load_skill(" not in template
+    assert "read_file" in template
+
+def test_v2_mode_no_read_file_in_prompt():
+    """V2 mode (expose_dynamic_tools=True): static prompt must NOT mention read_file/limit=1000."""
+    middleware = SkillsMiddleware(
+        backend=None, sources=["/skills/user/"], expose_dynamic_tools=True,
+    )
+    template = middleware.system_prompt_template
+    assert "read_file" not in template
+    assert "limit=1000" not in template
+    assert "load_skill(" in template
+
+def test_v1_per_skill_hint_uses_read_file():
+    """V1 mode: per-skill hint in _format_skills_list uses read_file, not load_skill."""
+    m = SkillsMiddleware(backend=None, sources=["/skills/user/"], expose_dynamic_tools=False)
+    result = m._format_skills_list([{"name": "web", "description": "...", "path": "/skills/user/web/SKILL.md", "license": None, "compatibility": None, "metadata": {}, "allowed_tools": []}], loaded=[], resources={})
+    assert "load_skill(" not in result
+    assert "read_file" in result
+
+def test_v2_per_skill_hint_uses_load_skill():
+    """V2 mode: per-skill hint uses load_skill, not read_file."""
+    m = SkillsMiddleware(backend=None, sources=["/skills/user/"], expose_dynamic_tools=True)
+    result = m._format_skills_list([{"name": "web", "description": "...", "path": "/skills/user/web/SKILL.md", "license": None, "compatibility": None, "metadata": {}, "allowed_tools": []}], loaded=[], resources={})
+    assert "load_skill(\"web\")" in result
+    assert "read_file" not in result
+```
+
+**红线判定**: 这 4 个测试**任何一个失败**都视为 Phase 2b 失败，必须回滚。它们是 Round 14 P1 修复的回归屏障。
+
+---
+
 ## 时间估算
 
 | 阶段 | 时间 | 风险 |
