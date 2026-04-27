@@ -79,14 +79,39 @@ COMMANDS: tuple[SlashCommand, ...] = (
         hidden_keywords="switch profile persona",
     ),
     SlashCommand(
+        name="/auto-update",
+        description="Toggle automatic updates on or off",
+        bypass_tier=BypassTier.SIDE_EFFECT_FREE,
+    ),
+    SlashCommand(
+        name="/changelog",
+        description="Open changelog in browser",
+        bypass_tier=BypassTier.SIDE_EFFECT_FREE,
+    ),
+    SlashCommand(
         name="/clear",
         description="Clear chat and start new thread",
         bypass_tier=BypassTier.QUEUED,
         hidden_keywords="reset",
     ),
     SlashCommand(
+        name="/docs",
+        description="Open documentation in browser",
+        bypass_tier=BypassTier.SIDE_EFFECT_FREE,
+    ),
+    SlashCommand(
         name="/editor",
         description="Open prompt in external editor ($EDITOR)",
+        bypass_tier=BypassTier.QUEUED,
+    ),
+    SlashCommand(
+        name="/feedback",
+        description="Submit a bug report or feature request",
+        bypass_tier=BypassTier.SIDE_EFFECT_FREE,
+    ),
+    SlashCommand(
+        name="/help",
+        description="Show help",
         bypass_tier=BypassTier.QUEUED,
     ),
     SlashCommand(
@@ -113,6 +138,19 @@ COMMANDS: tuple[SlashCommand, ...] = (
         hidden_keywords="compact",
         aliases=("/compact",),
     ),
+    SlashCommand(
+        name="/quit",
+        description="Exit app",
+        bypass_tier=BypassTier.ALWAYS,
+        hidden_keywords="close leave",
+        aliases=("/q",),
+    ),
+    SlashCommand(
+        name="/reload",
+        description="Reload config from environment variables and .env",
+        bypass_tier=BypassTier.QUEUED,
+        hidden_keywords="refresh",
+    ),
     SlashCommand(  # Static alias; not auto-generated from skill discovery
         name="/remember",
         description="Update memory and skills from conversation",
@@ -126,15 +164,16 @@ COMMANDS: tuple[SlashCommand, ...] = (
         argument_hint="[task]",
     ),
     SlashCommand(
+        name="/theme",
+        description="Switch color theme",
+        bypass_tier=BypassTier.IMMEDIATE_UI,
+        hidden_keywords="dark light color appearance",
+    ),
+    SlashCommand(
         name="/threads",
         description="Browse and resume previous threads",
         bypass_tier=BypassTier.IMMEDIATE_UI,
         hidden_keywords="continue history sessions",
-    ),
-    SlashCommand(
-        name="/trace",
-        description="Open current thread in LangSmith",
-        bypass_tier=BypassTier.SIDE_EFFECT_FREE,
     ),
     SlashCommand(
         name="/tokens",
@@ -143,16 +182,9 @@ COMMANDS: tuple[SlashCommand, ...] = (
         hidden_keywords="cost",
     ),
     SlashCommand(
-        name="/reload",
-        description="Reload config from environment variables and .env",
-        bypass_tier=BypassTier.QUEUED,
-        hidden_keywords="refresh",
-    ),
-    SlashCommand(
-        name="/theme",
-        description="Switch color theme",
-        bypass_tier=BypassTier.IMMEDIATE_UI,
-        hidden_keywords="dark light color appearance",
+        name="/trace",
+        description="Open current thread in LangSmith",
+        bypass_tier=BypassTier.SIDE_EFFECT_FREE,
     ),
     SlashCommand(
         name="/update",
@@ -161,44 +193,12 @@ COMMANDS: tuple[SlashCommand, ...] = (
         hidden_keywords="upgrade",
     ),
     SlashCommand(
-        name="/auto-update",
-        description="Toggle automatic updates on or off",
-        bypass_tier=BypassTier.SIDE_EFFECT_FREE,
-    ),
-    SlashCommand(
-        name="/changelog",
-        description="Open changelog in browser",
-        bypass_tier=BypassTier.SIDE_EFFECT_FREE,
-    ),
-    SlashCommand(
         name="/version",
         description="Show version",
         bypass_tier=BypassTier.CONNECTING,
     ),
-    SlashCommand(
-        name="/feedback",
-        description="Submit a bug report or feature request",
-        bypass_tier=BypassTier.SIDE_EFFECT_FREE,
-    ),
-    SlashCommand(
-        name="/docs",
-        description="Open documentation in browser",
-        bypass_tier=BypassTier.SIDE_EFFECT_FREE,
-    ),
-    SlashCommand(
-        name="/help",
-        description="Show help",
-        bypass_tier=BypassTier.QUEUED,
-    ),
-    SlashCommand(
-        name="/quit",
-        description="Exit app",
-        bypass_tier=BypassTier.ALWAYS,
-        hidden_keywords="close leave",
-        aliases=("/q",),
-    ),
 )
-"""All slash commands."""
+"""All slash commands. Sorted alphabetically by name (enforced by tests)."""
 
 
 # ---------------------------------------------------------------------------

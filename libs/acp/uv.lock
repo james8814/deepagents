@@ -430,7 +430,7 @@ wheels = [
 
 [[package]]
 name = "deepagents"
-version = "0.5.3"
+version = "0.5.0"
 source = { editable = "../deepagents" }
 dependencies = [
     { name = "langchain" },
@@ -472,7 +472,7 @@ test = [
 
 [[package]]
 name = "deepagents-acp"
-version = "0.0.6"
+version = "0.0.4"
 source = { editable = "." }
 dependencies = [
     { name = "agent-client-protocol" },
