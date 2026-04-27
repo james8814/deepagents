@@ -395,7 +395,7 @@ def test_format_skill_annotations_both_fields() -> None:
         metadata={},
         allowed_tools=[],
     )
-    assert _format_skill_annotations(skill) == "License: MIT; Compatibility: Python 3.10+"
+    assert _format_skill_annotations(skill) == "License: MIT, Compatibility: Python 3.10+"
 
 
 def test_format_skill_annotations_license_only() -> None:
@@ -1158,7 +1158,7 @@ def test_format_skills_list_with_license_and_compatibility() -> None:
     ]
 
     result = middleware._format_skills_list(skills, loaded=[], resources={})
-    assert "(License: Apache-2.0; Compatibility: Requires poppler)" in result
+    assert "(License: Apache-2.0, Compatibility: Requires poppler)" in result
 
 
 def test_format_skills_list_license_only() -> None:
@@ -1885,3 +1885,80 @@ async def test_skills_middleware_with_store_backend_assistant_id_async() -> None
     assert len(result_4["skills_metadata"]) == 1
     assert result_4["skills_metadata"][0]["name"] == "async-skill-one"
     assert result_4["skills_metadata"][0]["description"] == "Async skill for assistant 1"
+
+
+# ===========================================================================
+# Round 15 Red Line 2: V1/V2 prompt path mutex
+# (Round 14 P1 regression barrier)
+# ===========================================================================
+
+
+def test_v1_mode_no_load_skill_in_prompt() -> None:
+    """V1 mode (expose_dynamic_tools=False): prompt must NOT mention load_skill."""
+    middleware = SkillsMiddleware(
+        backend=None,  # type: ignore[arg-type]
+        sources=["/skills/user/"],
+        expose_dynamic_tools=False,
+    )
+    template = middleware.system_prompt_template
+    assert "load_skill(" not in template, "V1 mode should not direct LLM to load_skill"
+    assert "read_file" in template, "V1 mode should direct LLM to read_file"
+
+
+def test_v2_mode_no_read_file_in_prompt() -> None:
+    """V2 mode (expose_dynamic_tools=True): static prompt must NOT mention read_file/limit=1000."""
+    middleware = SkillsMiddleware(
+        backend=None,  # type: ignore[arg-type]
+        sources=["/skills/user/"],
+        expose_dynamic_tools=True,
+    )
+    template = middleware.system_prompt_template
+    assert "read_file" not in template, "V2 mode static prompt should not direct LLM to read_file"
+    assert "limit=1000" not in template, "V2 mode static prompt should not mention limit=1000"
+    assert "load_skill(" in template, "V2 mode should direct LLM to load_skill"
+
+
+def test_v1_per_skill_hint_uses_read_file() -> None:
+    """V1 per-skill hint uses read_file, not load_skill."""
+    m = SkillsMiddleware(
+        backend=None,  # type: ignore[arg-type]
+        sources=["/skills/user/"],
+        expose_dynamic_tools=False,
+    )
+    skills: list[SkillMetadata] = [
+        {
+            "name": "web",
+            "description": "...",
+            "path": "/skills/user/web/SKILL.md",
+            "license": None,
+            "compatibility": None,
+            "metadata": {},
+            "allowed_tools": [],
+        }
+    ]
+    result = m._format_skills_list(skills, loaded=[], resources={})
+    assert "load_skill(" not in result, "V1 per-skill hint should not mention load_skill"
+    assert "read_file" in result, "V1 per-skill hint should direct LLM to read_file"
+
+
+def test_v2_per_skill_hint_uses_load_skill() -> None:
+    """V2 per-skill hint uses load_skill, not read_file."""
+    m = SkillsMiddleware(
+        backend=None,  # type: ignore[arg-type]
+        sources=["/skills/user/"],
+        expose_dynamic_tools=True,
+    )
+    skills: list[SkillMetadata] = [
+        {
+            "name": "web",
+            "description": "...",
+            "path": "/skills/user/web/SKILL.md",
+            "license": None,
+            "compatibility": None,
+            "metadata": {},
+            "allowed_tools": [],
+        }
+    ]
+    result = m._format_skills_list(skills, loaded=[], resources={})
+    assert 'load_skill("web")' in result, "V2 per-skill hint should mention load_skill"
+    assert "read_file" not in result, "V2 per-skill hint should not direct LLM to read_file"

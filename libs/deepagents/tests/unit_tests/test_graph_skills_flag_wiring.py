@@ -199,3 +199,31 @@ def test_subagent_skills_allowlist_is_wired(monkeypatch: MonkeyPatch) -> None:
     assert skills_mws, "Expected SkillsMiddleware injected for researcher"
     allowed = getattr(skills_mws[0], "_allowed_skills", None)
     assert allowed is not None and set(allow) == set(allowed)
+
+
+def test_state_schema_passed_to_create_agent(monkeypatch: MonkeyPatch) -> None:
+    """state_schema must be forwarded to underlying create_agent.
+
+    Round 15 Go/No-Go red-line: eb9fab96 reorders create_deep_agent parameters
+    and could accidentally drop state_schema from the wiring path. Failure here
+    triggers rollback to checkpoint-round15-phase2a-done.
+    """
+    captured: dict[str, Any] = {}
+
+    def _fake_create_agent(_model: Any, **kwargs: Any) -> _DummyCompiled:  # noqa: ANN401
+        captured.update(kwargs)
+        return _DummyCompiled()
+
+    monkeypatch.setattr(graph_mod, "create_agent", _fake_create_agent)
+
+    class CustomState(dict):  # noqa: D101 — minimal sentinel type
+        pass
+
+    create_deep_agent(
+        model=GenericFakeChatModel(messages=iter([])),
+        state_schema=CustomState,
+    )
+
+    assert captured.get("state_schema") is CustomState, (
+        "state_schema wiring broken: not forwarded to create_agent"
+    )
