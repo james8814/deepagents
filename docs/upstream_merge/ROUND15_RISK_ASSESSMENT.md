@@ -319,26 +319,42 @@ cd libs/deepagents
 UV_LINK_MODE=copy uv run --group test pytest tests/unit_tests/test_graph_skills_flag_wiring.py -v
 ```
 
-**必须全部通过的 6 个测试**:
+**必须全部通过的 7 个测试**（机器判定，不可争议）:
 
-- `test_skills_expose_flag_wired_into_main_agent_middleware` — `skills_expose_dynamic_tools=True` 传递到主代理 SkillsMiddleware
-- `test_skills_expose_flag_defaults_false` — 默认值正确
-- `test_skills_expose_flag_wired_into_subagent_middleware` — 传递到 subagent SkillsMiddleware
-- `test_main_agent_skips_default_skills_when_user_provided` — 用户提供 SkillsMiddleware 时跳过默认注入
-- `test_subagent_skips_default_skills_when_user_provided` — subagent 同上
-- `test_subagent_skills_allowlist_is_wired` — `skills_allowlist` 传递到 SkillsMiddleware(allowed_skills=...)
+| # | 测试名 | 验证目标 |
+| --- | --- | --- |
+| 1 | `test_skills_expose_flag_wired_into_main_agent_middleware` | `skills_expose_dynamic_tools=True` 传递到主代理 SkillsMiddleware |
+| 2 | `test_skills_expose_flag_defaults_false` | 默认值正确 |
+| 3 | `test_skills_expose_flag_wired_into_subagent_middleware` | 传递到 subagent SkillsMiddleware |
+| 4 | `test_main_agent_skips_default_skills_when_user_provided` | 用户提供 SkillsMiddleware 时跳过默认注入 |
+| 5 | `test_subagent_skips_default_skills_when_user_provided` | subagent 同上 |
+| 6 | `test_subagent_skills_allowlist_is_wired` | `skills_allowlist` 传递到 SkillsMiddleware(allowed_skills=...) |
+| 7 | **`test_state_schema_passed_to_create_agent`**（**强制新增**，必须随 Phase 2b 一起合入到 `tests/unit_tests/test_graph_skills_flag_wiring.py`） | `state_schema` 必须传递到底层 `create_agent`，编译后图的 input schema 必须包含自定义字段 |
 
-**附加 state_schema wiring 检查**（如 `test_graph_skills_flag_wiring.py` 未覆盖，需手动添加）:
+**强制新增测试代码**（放置位置: `libs/deepagents/tests/unit_tests/test_graph_skills_flag_wiring.py`，与既有 6 个同级）:
 
 ```python
-def test_state_schema_passed_to_create_agent():
-    """state_schema must be forwarded to underlying create_agent."""
+def test_state_schema_passed_to_create_agent(monkeypatch: MonkeyPatch) -> None:
+    """state_schema must be forwarded to underlying create_agent.
+
+    This is a Round 15 Go/No-Go red-line: eb9fab96 reorders create_deep_agent
+    parameters and could accidentally drop state_schema from the wiring path.
+    Failure here MUST trigger rollback to checkpoint-round15-phase2a-done.
+    """
+    from typing import NotRequired
+    from langchain.agents import AgentState
+    # Use the same fake model pattern as other tests in this file
+    # ... (具体 fake model setup 与既有测试一致，此处省略)
     class Custom(AgentState):
         custom_field: NotRequired[str]
     agent = create_deep_agent(model=fake_model, state_schema=Custom)
     # Verify the compiled graph's input schema contains 'custom_field'
-    assert "custom_field" in agent.get_input_schema().model_fields
+    schema_fields = agent.get_input_schema().model_fields
+    assert "custom_field" in schema_fields, \
+        "state_schema wiring broken: custom_field not in compiled graph input schema"
 ```
+
+**判定**: 7 个测试**全部通过**才算红线 1 通过。任何一个失败 → 回滚到 `checkpoint-round15-phase2a-done`。
 
 #### 红线 2: skills.py V1/V2 prompt 路径互斥（针对 `f7e37721` + Round 14 P1 回归防护）
 
