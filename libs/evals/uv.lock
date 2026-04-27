@@ -1066,7 +1066,7 @@ wheels = [
 
 [[package]]
 name = "deepagents"
-version = "0.5.3"
+version = "0.5.0"
 source = { editable = "../deepagents" }
 dependencies = [
     { name = "langchain" },
@@ -1083,7 +1083,7 @@ requires-dist = [
     { name = "langchain-anthropic", specifier = ">=1.4.0,<2.0.0" },
     { name = "langchain-core", specifier = ">=1.2.27,<2.0.0" },
     { name = "langchain-google-genai", specifier = ">=4.2.1,<5.0.0" },
-    { name = "langsmith", specifier = ">=0.3.0" },
+    { name = "langsmith", specifier = ">=0.7.35" },
     { name = "wcmatch" },
 ]
 
@@ -1122,7 +1122,7 @@ wheels = [
 
 [[package]]
 name = "deepagents-cli"
-version = "0.0.41"
+version = "0.0.34"
 source = { directory = "../cli" }
 dependencies = [
     { name = "aiosqlite" },
@@ -1143,6 +1143,7 @@ dependencies = [
     { name = "packaging" },
     { name = "pillow" },
     { name = "prompt-toolkit" },
+    { name = "puremagic" },
     { name = "pyperclip" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
@@ -1201,6 +1202,7 @@ requires-dist = [
     { name = "packaging", specifier = ">=23.0" },
     { name = "pillow", specifier = ">=10.0.0,<13.0.0" },
     { name = "prompt-toolkit", specifier = ">=3.0.52,<4.0.0" },
+    { name = "puremagic", specifier = ">=1.20" },
     { name = "pyperclip", specifier = ">=1.11.0,<2.0.0" },
     { name = "python-dotenv", specifier = ">=1.0.0,<2.0.0" },
     { name = "pyyaml", specifier = ">=6.0.0" },
@@ -2787,7 +2789,7 @@ wheels = [
 
 [[package]]
 name = "langsmith"
-version = "0.7.34"
+version = "0.7.37"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
@@ -2800,9 +2802,9 @@ dependencies = [
     { name = "xxhash" },
     { name = "zstandard" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/26/3c/f5b2444909632fa9f11a0d2a12b960f5fc1edf1f0c9c222e78cb5ef8df18/langsmith-0.7.34.tar.gz", hash = "sha256:1b1fd637e129ae41d5fc8eebf23483816cd1251d61cffb21ce5203858561e70c", size = 4390970, upload-time = "2026-04-23T13:51:43.522Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e4/38/092f99a3326f0f6bb6ea62f388b16611d9cb619869ed7b0f3dae6c21c331/langsmith-0.7.37.tar.gz", hash = "sha256:e15ab27f5febbcfbaec4e6fa74ab71f0284f4c5965249cc732fe9344844290cb", size = 4433170, upload-time = "2026-04-26T21:36:41.314Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e3/94/c011bc7e045e6da6aaab9d2adb2f3cefdb382fc038f09ef0865ac3214978/langsmith-0.7.34-py3-none-any.whl", hash = "sha256:52478123a74403b320230625d90810b5d8b88d3cd275b3eae6d2f696d40053ce", size = 376754, upload-time = "2026-04-23T13:51:41.767Z" },
+    { url = "https://files.pythonhosted.org/packages/c6/76/fa99559d23ec9a39e1153f317a5ec99e7b967aec08b5faac04f8da603dd3/langsmith-0.7.37-py3-none-any.whl", hash = "sha256:64fc5fbf223fcdcc6ee44b08a5df4b2ab8a55e4d968e850c86b6b69fe0c258e3", size = 385948, upload-time = "2026-04-26T21:36:39.09Z" },
 ]
 
 [package.optional-dependencies]
@@ -3965,6 +3967,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/1f/3e/38ff2ddee5cc946f575c9d8cc822e34bde205cf61acf8099ad88ef19d7d2/protobuf-7.34.0-cp310-abi3-win32.whl", hash = "sha256:f791ec509707a1d91bd02e07df157e75e4fb9fbdad12a81b7396201ec244e2e3", size = 426628, upload-time = "2026-02-27T00:30:21.555Z" },
     { url = "https://files.pythonhosted.org/packages/cb/71/7c32eaf34a61a1bae1b62a2ac4ffe09b8d1bb0cf93ad505f42040023db89/protobuf-7.34.0-cp310-abi3-win_amd64.whl", hash = "sha256:9f9079f1dde4e32342ecbd1c118d76367090d4aaa19da78230c38101c5b3dd40", size = 437901, upload-time = "2026-02-27T00:30:22.836Z" },
     { url = "https://files.pythonhosted.org/packages/a4/e7/14dc9366696dcb53a413449881743426ed289d687bcf3d5aee4726c32ebb/protobuf-7.34.0-py3-none-any.whl", hash = "sha256:e3b914dd77fa33fa06ab2baa97937746ab25695f389869afdf03e81f34e45dc7", size = 170716, upload-time = "2026-02-27T00:30:23.994Z" },
+]
+
+[[package]]
+name = "puremagic"
+version = "2.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/24/74/ce5987ab9b8aec4ced06e2723ebb604205c9eb58abdad91453da93166380/puremagic-2.2.0.tar.gz", hash = "sha256:eb4bddf07c177c4b434554b92165b67449f5a51e152b976202d6254498810eef", size = 1189752, upload-time = "2026-04-08T01:39:55.562Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/95/81/314320aeffd88dadeac553ff9eb10f54507ab41deccd0c69f6221d254a0a/puremagic-2.2.0-py3-none-any.whl", hash = "sha256:c4f7ed7307f056c787199acfda839555921be1df13abba61e8e6db0c787ae1d0", size = 71971, upload-time = "2026-04-08T01:39:54.169Z" },
 ]
 
 [[package]]
