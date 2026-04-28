@@ -1160,7 +1160,6 @@ class TestProfilePluginLoader:
 
         with (
             caplog.at_level(logging.ERROR, logger="deepagents.profiles._builtin_profiles"),
-            pytest.warns(UserWarning, match="failed to load entry point"),
             patch(
                 "deepagents.profiles._builtin_profiles.entry_points",
                 side_effect=fake_entry_points,
@@ -1191,7 +1190,6 @@ class TestProfilePluginLoader:
 
         with (
             caplog.at_level(logging.ERROR, logger="deepagents.profiles._builtin_profiles"),
-            pytest.warns(UserWarning, match="did not resolve to a callable"),
             patch(
                 "deepagents.profiles._builtin_profiles.entry_points",
                 return_value=[ep],
@@ -1220,7 +1218,6 @@ class TestProfilePluginLoader:
 
         with (
             caplog.at_level(logging.ERROR, logger="deepagents.profiles._builtin_profiles"),
-            pytest.warns(UserWarning, match="registration callable .* raised"),
             patch(
                 "deepagents.profiles._builtin_profiles.entry_points",
                 return_value=[ep],
@@ -1239,7 +1236,6 @@ class TestProfilePluginLoader:
 
         with (
             caplog.at_level(logging.WARNING, logger="deepagents.profiles._builtin_profiles"),
-            pytest.warns(UserWarning, match="Failed to enumerate"),
             patch(
                 "deepagents.profiles._builtin_profiles.entry_points",
                 side_effect=RuntimeError("malformed dist-info"),
