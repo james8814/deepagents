@@ -25,7 +25,6 @@ from deepagents_cli.widgets.chat_input import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    import pytest
     from textual.pilot import Pilot
 
 
@@ -223,6 +222,34 @@ class _RecordingApp(App[None]):
 
     def on_chat_input_submitted(self, event: ChatInput.Submitted) -> None:
         self.submitted.append(event)
+
+
+class TestChatTextAreaKeybindings:
+    """Regression tests for terminal key aliases in the chat input."""
+
+    def test_newline_bindings_do_not_shadow_enter_alias(self) -> None:
+        """`ctrl+m` is carriage return in terminals, so it must remain plain Enter."""
+        newline_keys = {
+            key.strip()
+            for binding in ChatTextArea.BINDINGS
+            if binding.action == "insert_newline"
+            for key in binding.key.split(",")
+        }
+
+        assert "ctrl+m" not in newline_keys
+        assert "ctrl+m" not in ChatTextArea._NEWLINE_KEYS
+
+    def test_modified_backspace_deletes_word_left(self) -> None:
+        """Modified Backspace aliases should delete the previous word."""
+        word_delete_keys = {
+            key.strip()
+            for binding in ChatTextArea.BINDINGS
+            if binding.action == "delete_word_left"
+            for key in binding.key.split(",")
+        }
+
+        assert "ctrl+backspace" in word_delete_keys
+        assert "alt+backspace" in word_delete_keys
 
 
 class _ImagePasteApp(App[None]):
@@ -1280,7 +1307,7 @@ class TestSlashCompletionCursorMapping:
 
             chat._text_area.insert("/")
             await _pause_for_strip(pilot)
-            chat._text_area.insert("rem")
+            chat._text_area.insert("re")
             await pilot.pause()
 
             chat.on_completion_popup_option_clicked(
@@ -1984,12 +2011,8 @@ class TestBackslashEnterNewline:
     pair and collapses it into a newline.
     """
 
-    async def test_backslash_then_enter_inserts_newline(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_backslash_then_enter_inserts_newline(self) -> None:
         """Rapid backslash + enter should produce a newline, not submit."""
-        # Widen timing window to avoid flaky failures on slow CI / high-load machines.
-        monkeypatch.setattr(chat_input_module, "_BACKSLASH_ENTER_GAP_SECONDS", 5.0)
         app = _RecordingApp()
         async with app.run_test() as pilot:
             chat = app.query_one(ChatInput)
@@ -2034,12 +2057,8 @@ class TestBackslashEnterNewline:
 
             assert ta.text == "\\a"
 
-    async def test_backslash_enter_on_empty_prompt_does_not_submit(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_backslash_enter_on_empty_prompt_does_not_submit(self) -> None:
         """Backslash + enter on empty prompt should not submit."""
-        # Widen timing window to avoid flaky failures on slow CI / high-load machines.
-        monkeypatch.setattr(chat_input_module, "_BACKSLASH_ENTER_GAP_SECONDS", 5.0)
         app = _RecordingApp()
         async with app.run_test() as pilot:
             chat = app.query_one(ChatInput)
@@ -2212,6 +2231,28 @@ class TestCtrlUDeleteToLineStart:
 
             assert ta.text == "line one\n two\nline three"
             assert ta.cursor_location == (1, 0)
+
+
+class TestModifiedBackspaceDeleteWordLeft:
+    """Test modified Backspace aliases for word deletion."""
+
+    @pytest.mark.parametrize("key", ["ctrl+backspace", "alt+backspace"])
+    async def test_modified_backspace_deletes_previous_word(self, key: str) -> None:
+        """Modified Backspace should delete the word before the cursor."""
+        app = _ChatInputTestApp()
+        async with app.run_test() as pilot:
+            chat = app.query_one(ChatInput)
+            ta = chat._text_area
+            assert ta is not None
+
+            ta.insert("hello world")
+            await pilot.pause()
+
+            await pilot.press(key)
+            await pilot.pause()
+
+            assert ta.text == "hello "
+            assert ta.cursor_location == (0, 6)
 
 
 class _TextAreaTypingApp(App[None]):
