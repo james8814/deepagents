@@ -216,7 +216,7 @@ def test_state_schema_passed_to_create_agent(monkeypatch: MonkeyPatch) -> None:
 
     monkeypatch.setattr(graph_mod, "create_agent", _fake_create_agent)
 
-    class CustomState(dict):  # noqa: D101 — minimal sentinel type
+    class CustomState(dict):
         pass
 
     create_deep_agent(

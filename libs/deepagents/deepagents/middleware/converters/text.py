@@ -4,6 +4,8 @@ from pathlib import Path
 
 from deepagents.middleware.converters.base import BaseConverter
 
+CODE_DETECTION_THRESHOLD = 0.3
+
 
 class TextConverter(BaseConverter):
     """Converter for plain text files.
@@ -100,7 +102,7 @@ class TextConverter(BaseConverter):
                 code_indicators += 1
 
         # If more than 30% of lines look like code, treat as code
-        return code_indicators > 0 and code_indicators / min(20, len(lines)) > 0.3
+        return code_indicators > 0 and code_indicators / min(20, len(lines)) > CODE_DETECTION_THRESHOLD
 
     def _infer_language(self, content: str) -> str:
         """Infer programming language from content.
@@ -112,25 +114,25 @@ class TextConverter(BaseConverter):
             Language identifier for syntax highlighting.
         """
         first_lines = content.splitlines()[:5]
+        shebang_map = (
+            ("python", "python"),
+            ("bash", "bash"),
+            ("sh", "bash"),
+            ("node", "javascript"),
+            ("ruby", "ruby"),
+        )
 
         # Check shebang
         for line in first_lines:
             if line.startswith("#!"):
-                if "python" in line:
-                    return "python"
-                if "bash" in line or "sh" in line:
-                    return "bash"
-                if "node" in line:
-                    return "javascript"
-                if "ruby" in line:
-                    return "ruby"
+                for marker, language in shebang_map:
+                    if marker in line:
+                        return language
 
         # Check for language-specific patterns
-        content_lower = content.lower()
         if "def " in content or ("import " in content and "from " in content):
             return "python"
-        if "function " in content or "const " in content or "let " in content:
-            if "=>" in content or "async " in content:
-                return "javascript"
+        if ("function " in content or "const " in content or "let " in content) and ("=>" in content or "async " in content):
+            return "javascript"
 
         return ""  # No language specified

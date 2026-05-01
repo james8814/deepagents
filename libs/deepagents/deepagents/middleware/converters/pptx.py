@@ -1,12 +1,27 @@
 """PowerPoint presentation converter using python-pptx."""
 
+import importlib
 import logging
 import time
+from collections.abc import Sized
 from pathlib import Path
+from typing import Protocol
 
 from deepagents.middleware.converters.base import BaseConverter
 
 logger = logging.getLogger(__name__)
+TITLE_FONT_SIZE_PT = 24
+
+
+class _SlideTable(Protocol):
+    rows: Sized
+    columns: Sized
+
+    def cell(self, row_idx: int, col_idx: int) -> "_SlideCell": ...
+
+
+class _SlideCell(Protocol):
+    text: str
 
 
 class PPTXConverter(BaseConverter):
@@ -31,11 +46,16 @@ class PPTXConverter(BaseConverter):
         Returns:
             Markdown-formatted string with all slides.
         """
-        from pptx import Presentation
+        _ = raw_content
+        try:
+            presentation_factory = importlib.import_module("pptx").Presentation
+        except ModuleNotFoundError as e:
+            msg = "Missing optional dependency `python-pptx`. Install with `pip install python-pptx`."
+            raise ModuleNotFoundError(msg) from e
 
         start = time.time()
 
-        prs = Presentation(str(path))
+        prs = presentation_factory(str(path))
         parts = []
 
         for i, slide in enumerate(prs.slides, start=1):
@@ -49,7 +69,7 @@ class PPTXConverter(BaseConverter):
                         text_frame = shape.text_frame
                         if text_frame.paragraphs:
                             first_para = text_frame.paragraphs[0]
-                            if first_para.font.size and first_para.font.size.pt >= 24:
+                            if first_para.font.size and first_para.font.size.pt >= TITLE_FONT_SIZE_PT:
                                 slide_parts.append(f"## {shape.text.strip()}\n")
                             else:
                                 slide_parts.append(shape.text.strip())
@@ -94,15 +114,21 @@ class PPTXConverter(BaseConverter):
         Raises:
             ValueError: If slide number is out of range.
         """
-        from pptx import Presentation
+        _ = raw_content
+        try:
+            presentation_factory = importlib.import_module("pptx").Presentation
+        except ModuleNotFoundError as e:
+            msg = "Missing optional dependency `python-pptx`. Install with `pip install python-pptx`."
+            raise ModuleNotFoundError(msg) from e
 
         start = time.time()
 
-        prs = Presentation(str(path))
+        prs = presentation_factory(str(path))
         total_slides = len(prs.slides)
 
         if page < 1 or page > total_slides:
-            raise ValueError(f"Slide {page} out of range. Presentation has {total_slides} slides.")
+            msg = f"Slide {page} out of range. Presentation has {total_slides} slides."
+            raise ValueError(msg)
 
         slide = prs.slides[page - 1]
         slide_parts = [f"# Slide {page}/{total_slides}\n"]
@@ -113,7 +139,7 @@ class PPTXConverter(BaseConverter):
                     text_frame = shape.text_frame
                     if text_frame.paragraphs:
                         first_para = text_frame.paragraphs[0]
-                        if first_para.font.size and first_para.font.size.pt >= 24:
+                        if first_para.font.size and first_para.font.size.pt >= TITLE_FONT_SIZE_PT:
                             slide_parts.append(f"## {shape.text.strip()}\n")
                         else:
                             slide_parts.append(shape.text.strip())
@@ -142,12 +168,16 @@ class PPTXConverter(BaseConverter):
         Returns:
             Total number of slides.
         """
-        from pptx import Presentation
+        try:
+            presentation_factory = importlib.import_module("pptx").Presentation
+        except ModuleNotFoundError as e:
+            msg = "Missing optional dependency `python-pptx`. Install with `pip install python-pptx`."
+            raise ModuleNotFoundError(msg) from e
 
-        prs = Presentation(str(path))
+        prs = presentation_factory(str(path))
         return len(prs.slides)
 
-    def _convert_table(self, table) -> str:
+    def _convert_table(self, table: _SlideTable) -> str:
         """Convert a PowerPoint table to Markdown.
 
         Args:

@@ -215,7 +215,250 @@ def _apply_tool_description_overrides(
     return copied_tools
 
 
-def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic with many conditional branches
+def _build_subagent_middleware_stack(
+    *,
+    model: BaseChatModel,
+    backend: BackendProtocol | BackendFactory,
+    profile: _HarnessProfile,
+    skills: list[str] | None,
+    skills_expose_dynamic_tools: bool,
+    skills_allowlist: list[str] | None = None,
+    user_middleware: Sequence[AgentMiddleware[Any, Any, Any]] = (),
+    permissions: list[FilesystemPermission] | None = None,
+) -> list[AgentMiddleware[Any, Any, Any]]:
+    """Build the middleware stack for general-purpose and declarative subagents."""
+    subagent_middleware: list[AgentMiddleware[Any, Any, Any]] = [
+        TodoListMiddleware(),
+        FilesystemMiddleware(
+            backend=backend,
+            custom_tool_descriptions=profile.tool_description_overrides,
+        ),
+        create_summarization_middleware(model, backend),
+        PatchToolCallsMiddleware(),
+    ]
+    if skills:
+        skip_skills_injection = any(isinstance(m, SkillsMiddleware) for m in user_middleware)
+        if not skip_skills_injection:
+            subagent_middleware.append(
+                SkillsMiddleware(
+                    backend=backend,
+                    sources=skills,
+                    expose_dynamic_tools=skills_expose_dynamic_tools,
+                    allowed_skills=skills_allowlist,
+                )
+            )
+    subagent_middleware.extend(user_middleware)
+    subagent_middleware.extend(_resolve_extra_middleware(profile))
+    if profile.excluded_tools:
+        subagent_middleware.append(_ToolExclusionMiddleware(excluded=profile.excluded_tools))
+    subagent_middleware.append(AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"))
+    if permissions:
+        subagent_middleware.append(_PermissionMiddleware(rules=permissions, backend=backend))
+    return subagent_middleware
+
+
+def _build_general_purpose_subagent(
+    *,
+    model: BaseChatModel,
+    tools: list[BaseTool | Callable | dict[str, Any]] | None,
+    backend: BackendProtocol | BackendFactory,
+    profile: _HarnessProfile,
+    skills: list[str] | None,
+    skills_expose_dynamic_tools: bool,
+    permissions: list[FilesystemPermission] | None,
+    interrupt_on: dict[str, bool | InterruptOnConfig] | None,
+) -> SubAgent:
+    """Build the default general-purpose subagent spec."""
+    general_purpose_spec: SubAgent = {  # ty: ignore[missing-typed-dict-key]
+        **GENERAL_PURPOSE_SUBAGENT,
+        "model": model,
+        "tools": tools or [],
+        "middleware": _build_subagent_middleware_stack(
+            model=model,
+            backend=backend,
+            profile=profile,
+            skills=skills,
+            skills_expose_dynamic_tools=skills_expose_dynamic_tools,
+            permissions=permissions,
+        ),
+    }
+    if interrupt_on is not None:
+        general_purpose_spec["interrupt_on"] = interrupt_on
+    return general_purpose_spec
+
+
+def _process_declarative_subagent(
+    spec: SubAgent,
+    *,
+    default_model: BaseChatModel,
+    default_tools: Sequence[BaseTool | Callable | dict[str, Any]] | None,
+    parent_permissions: list[FilesystemPermission] | None,
+    backend: BackendProtocol | BackendFactory,
+    interrupt_on: dict[str, bool | InterruptOnConfig] | None,
+    skills_expose_dynamic_tools: bool,
+) -> SubAgent:
+    """Fill in defaults and middleware for a declarative subagent spec."""
+    raw_subagent_model = spec.get("model", default_model)
+    subagent_model = resolve_model(raw_subagent_model)
+    subagent_spec = raw_subagent_model if isinstance(raw_subagent_model, str) else None
+    subagent_profile = _harness_profile_for_model(subagent_model, subagent_spec)
+    subagent_permissions = spec.get("permissions", parent_permissions)
+    subagent_skills = spec.get("skills")
+    user_spec_middleware = list(spec.get("middleware", []))
+    raw_subagent_tools = spec.get("tools") if "tools" in spec else default_tools
+
+    processed_spec: SubAgent = {  # ty: ignore[missing-typed-dict-key]
+        **spec,
+        "model": subagent_model,
+        "tools": _apply_tool_description_overrides(raw_subagent_tools, subagent_profile.tool_description_overrides) or [],
+        "middleware": _build_subagent_middleware_stack(
+            model=subagent_model,
+            backend=backend,
+            profile=subagent_profile,
+            skills=subagent_skills,
+            skills_expose_dynamic_tools=skills_expose_dynamic_tools,
+            skills_allowlist=spec.get("skills_allowlist"),
+            user_middleware=user_spec_middleware,
+            permissions=subagent_permissions,
+        ),
+    }
+    subagent_interrupt_on = spec.get("interrupt_on", interrupt_on)
+    if subagent_interrupt_on is not None:
+        processed_spec["interrupt_on"] = subagent_interrupt_on
+    return processed_spec
+
+
+def _partition_subagents(
+    subagents: Sequence[SubAgent | CompiledSubAgent | AsyncSubAgent] | None,
+    *,
+    default_model: BaseChatModel,
+    default_tools: Sequence[BaseTool | Callable | dict[str, Any]] | None,
+    backend: BackendProtocol | BackendFactory,
+    profile: _HarnessProfile,
+    skills: list[str] | None,
+    skills_expose_dynamic_tools: bool,
+    permissions: list[FilesystemPermission] | None,
+    interrupt_on: dict[str, bool | InterruptOnConfig] | None,
+) -> tuple[list[SubAgent | CompiledSubAgent], list[AsyncSubAgent]]:
+    """Split raw subagent specs into inline and async collections."""
+    inline_subagents: list[SubAgent | CompiledSubAgent] = []
+    async_subagents: list[AsyncSubAgent] = []
+
+    for spec in subagents or []:
+        if "graph_id" in spec:
+            async_subagents.append(cast("AsyncSubAgent", spec))
+            continue
+        if "runnable" in spec:
+            inline_subagents.append(spec)
+            continue
+        inline_subagents.append(
+            _process_declarative_subagent(
+                spec,
+                default_model=default_model,
+                default_tools=default_tools,
+                parent_permissions=permissions,
+                backend=backend,
+                interrupt_on=interrupt_on,
+                skills_expose_dynamic_tools=skills_expose_dynamic_tools,
+            )
+        )
+
+    if not any(spec["name"] == GENERAL_PURPOSE_SUBAGENT["name"] for spec in inline_subagents):
+        inline_subagents.insert(
+            0,
+            _build_general_purpose_subagent(
+                model=default_model,
+                tools=cast("list[BaseTool | Callable | dict[str, Any]] | None", default_tools),
+                backend=backend,
+                profile=profile,
+                skills=skills,
+                skills_expose_dynamic_tools=skills_expose_dynamic_tools,
+                permissions=permissions,
+                interrupt_on=interrupt_on,
+            ),
+        )
+
+    return inline_subagents, async_subagents
+
+
+def _build_main_agent_middleware(
+    *,
+    model: BaseChatModel,
+    backend: BackendProtocol | BackendFactory,
+    profile: _HarnessProfile,
+    inline_subagents: list[SubAgent | CompiledSubAgent],
+    async_subagents: list[AsyncSubAgent],
+    middleware: Sequence[AgentMiddleware],
+    skills: list[str] | None,
+    skills_expose_dynamic_tools: bool,
+    memory: list[str] | None,
+    permissions: list[FilesystemPermission] | None,
+    interrupt_on: dict[str, bool | InterruptOnConfig] | None,
+) -> list[AgentMiddleware[Any, Any, Any]]:
+    """Build the middleware stack for the main deep agent."""
+    deepagent_middleware: list[AgentMiddleware[Any, Any, Any]] = [TodoListMiddleware()]
+    if skills is not None and not any(isinstance(m, SkillsMiddleware) for m in middleware):
+        deepagent_middleware.append(
+            SkillsMiddleware(
+                backend=backend,
+                sources=skills,
+                expose_dynamic_tools=skills_expose_dynamic_tools,
+            )
+        )
+    deepagent_middleware.extend(
+        [
+            FilesystemMiddleware(
+                backend=backend,
+                custom_tool_descriptions=profile.tool_description_overrides,
+            ),
+            SubAgentMiddleware(
+                backend=backend,
+                subagents=inline_subagents,
+                task_description=profile.tool_description_overrides.get("task"),
+            ),
+            create_summarization_middleware(model, backend),
+            PatchToolCallsMiddleware(),
+        ]
+    )
+    if async_subagents:
+        deepagent_middleware.append(AsyncSubAgentMiddleware(async_subagents=async_subagents))
+    if middleware:
+        deepagent_middleware.extend(middleware)
+    deepagent_middleware.extend(_resolve_extra_middleware(profile))
+    if profile.excluded_tools:
+        deepagent_middleware.append(_ToolExclusionMiddleware(excluded=profile.excluded_tools))
+    deepagent_middleware.append(AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"))
+    if memory is not None:
+        deepagent_middleware.append(
+            MemoryMiddleware(
+                backend=backend,
+                sources=memory,
+                add_cache_control=True,
+            )
+        )
+    if interrupt_on is not None:
+        deepagent_middleware.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
+    if permissions:
+        deepagent_middleware.append(_PermissionMiddleware(rules=permissions, backend=backend))
+    return deepagent_middleware
+
+
+def _build_final_system_prompt(
+    system_prompt: str | SystemMessage | None,
+    profile: _HarnessProfile,
+) -> str | SystemMessage:
+    """Compose the caller prompt with the profile-specific base prompt."""
+    base_prompt = profile.base_system_prompt if profile.base_system_prompt is not None else BASE_AGENT_PROMPT
+    if profile.system_prompt_suffix is not None:
+        base_prompt = base_prompt + "\n\n" + profile.system_prompt_suffix
+    if system_prompt is None:
+        return base_prompt
+    if isinstance(system_prompt, SystemMessage):
+        return SystemMessage(content_blocks=[*system_prompt.content_blocks, {"type": "text", "text": f"\n\n{base_prompt}"}])
+    return system_prompt + "\n\n" + base_prompt
+
+
+def create_deep_agent(
     model: str | BaseChatModel | None = None,
     tools: Sequence[BaseTool | Callable | dict[str, Any]] | None = None,
     *,
@@ -447,211 +690,31 @@ def create_deep_agent(  # noqa: C901, PLR0912  # Complex graph assembly logic wi
     )
 
     backend = backend if backend is not None else StateBackend()
-
-    # Build general-purpose subagent with default middleware stack
-    gp_middleware: list[AgentMiddleware[Any, Any, Any]] = [
-        TodoListMiddleware(),
-        FilesystemMiddleware(
-            backend=backend,
-            custom_tool_descriptions=_profile.tool_description_overrides,
-        ),
-        create_summarization_middleware(model, backend),
-        PatchToolCallsMiddleware(),
-    ]
-    if skills is not None:
-        gp_middleware.append(
-            SkillsMiddleware(
-                backend=backend,
-                sources=skills,
-                expose_dynamic_tools=skills_expose_dynamic_tools,
-            )
-        )
-
-    # Add provider-specific middleware, if any
-    gp_middleware.extend(_resolve_extra_middleware(_profile))
-
-    # Strip excluded tools after all tool-injecting middleware has run
-    if _profile.excluded_tools:
-        gp_middleware.append(_ToolExclusionMiddleware(excluded=_profile.excluded_tools))
-    # Prompt caching is unconditional: "ignore" silently skips non-Anthropic models
-    gp_middleware.append(AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"))
-    if permissions:
-        gp_middleware.append(_PermissionMiddleware(rules=permissions, backend=backend))
-
-    general_purpose_spec: SubAgent = {  # ty: ignore[missing-typed-dict-key]
-        **GENERAL_PURPOSE_SUBAGENT,
-        "model": model,
-        "tools": _tools or [],
-        "middleware": gp_middleware,
-    }
-    if interrupt_on is not None:
-        general_purpose_spec["interrupt_on"] = interrupt_on
-
-    # Set up subagent middleware
-    inline_subagents: list[SubAgent | CompiledSubAgent] = []
-    async_subagents: list[AsyncSubAgent] = []
-    for spec in subagents or []:
-        if "graph_id" in spec:
-            # Then spec is an AsyncSubAgent
-            async_subagents.append(cast("AsyncSubAgent", spec))
-            continue
-        if "runnable" in spec:
-            # CompiledSubAgent - use as-is
-            inline_subagents.append(spec)
-        else:
-            # SubAgent - fill in defaults and prepend base middleware
-            raw_subagent_model = spec.get("model", model)
-            subagent_model = resolve_model(raw_subagent_model)
-
-            _subagent_spec = raw_subagent_model if isinstance(raw_subagent_model, str) else None
-            _subagent_profile = _harness_profile_for_model(subagent_model, _subagent_spec)
-
-            # Resolve permissions: subagent's own rules take priority, else inherit parent's
-            subagent_permissions = spec.get("permissions", permissions)
-
-            # Build middleware: base stack + skills (if specified) + user's middleware
-            subagent_middleware: list[AgentMiddleware[Any, Any, Any]] = [
-                TodoListMiddleware(),
-                FilesystemMiddleware(
-                    backend=backend,
-                    custom_tool_descriptions=_subagent_profile.tool_description_overrides,
-                ),
-                create_summarization_middleware(subagent_model, backend),
-                PatchToolCallsMiddleware(),
-            ]
-            subagent_skills = spec.get("skills")
-            subagent_skills_allowlist = spec.get("skills_allowlist")
-            user_spec_middleware = list(spec.get("middleware", []))
-            if subagent_skills:
-                # Skip default injection if user already provided a SkillsMiddleware
-                skip_subagent_skills = any(isinstance(m, SkillsMiddleware) for m in user_spec_middleware)
-                if not skip_subagent_skills:
-                    subagent_middleware.append(
-                        SkillsMiddleware(
-                            backend=backend,
-                            sources=subagent_skills,
-                            expose_dynamic_tools=skills_expose_dynamic_tools,
-                            allowed_skills=subagent_skills_allowlist,
-                        )
-                    )
-            subagent_middleware.extend(user_spec_middleware)
-
-            # Provider-specific middleware for this subagent's model
-            subagent_middleware.extend(_resolve_extra_middleware(_subagent_profile))
-            if _subagent_profile.excluded_tools:
-                subagent_middleware.append(_ToolExclusionMiddleware(excluded=_subagent_profile.excluded_tools))
-
-            # Prompt caching
-            subagent_middleware.append(AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"))
-            if subagent_permissions:
-                subagent_middleware.append(_PermissionMiddleware(rules=subagent_permissions, backend=backend))
-
-            subagent_interrupt_on = spec.get("interrupt_on", interrupt_on)
-
-            # Inherit parent tools unless the subagent declares its own.
-            # Descriptions are rewritten; exclusion is handled by middleware.
-            raw_subagent_tools = spec.get("tools") if "tools" in spec else tools
-            subagent_tools = _apply_tool_description_overrides(
-                raw_subagent_tools,
-                _subagent_profile.tool_description_overrides,
-            )
-
-            processed_spec: SubAgent = {  # ty: ignore[missing-typed-dict-key]
-                **spec,
-                "model": subagent_model,
-                "tools": subagent_tools or [],
-                "middleware": subagent_middleware,
-            }
-            if subagent_interrupt_on is not None:
-                processed_spec["interrupt_on"] = subagent_interrupt_on
-            inline_subagents.append(processed_spec)
-
-    # If an agent with general purpose name already exists in subagents, then don't add it
-    # This is how you overwrite/configure general purpose subagent
-    if not any(spec["name"] == GENERAL_PURPOSE_SUBAGENT["name"] for spec in inline_subagents):
-        # Add a general purpose subagent if it doesn't exist yet
-        inline_subagents.insert(0, general_purpose_spec)
-
-    # Build main agent middleware stack
-    deepagent_middleware: list[AgentMiddleware[Any, Any, Any]] = [
-        TodoListMiddleware(),
-    ]
-    if skills is not None:
-        # Skip injection if user already provided a SkillsMiddleware in top-level middleware
-        skip_main_skills = any(isinstance(m, SkillsMiddleware) for m in middleware)
-        if not skip_main_skills:
-            deepagent_middleware.append(
-                SkillsMiddleware(
-                    backend=backend,
-                    sources=skills,
-                    expose_dynamic_tools=skills_expose_dynamic_tools,
-                )
-            )
-    deepagent_middleware.extend(
-        [
-            FilesystemMiddleware(
-                backend=backend,
-                custom_tool_descriptions=_profile.tool_description_overrides,
-            ),
-            SubAgentMiddleware(
-                backend=backend,
-                subagents=inline_subagents,
-                # Overrides the task tool description. Value should include
-                # {available_agents} — a format placeholder replaced with the
-                # subagent name/description list. Without it the model can't
-                # see which subagents exist. None (default) uses the built-in
-                # template. Stale keys silently no-op if the tool is renamed.
-                task_description=_profile.tool_description_overrides.get("task"),
-            ),
-            create_summarization_middleware(model, backend),
-            PatchToolCallsMiddleware(),
-        ]
+    inline_subagents, async_subagents = _partition_subagents(
+        subagents,
+        default_model=model,
+        default_tools=_tools,
+        backend=backend,
+        profile=_profile,
+        skills=skills,
+        skills_expose_dynamic_tools=skills_expose_dynamic_tools,
+        permissions=permissions,
+        interrupt_on=interrupt_on,
     )
-
-    if async_subagents:
-        # Async here means that we run these subagents in a non-blocking manner.
-        # Currently this supports agents deployed via LangSmith deployments.
-        deepagent_middleware.append(AsyncSubAgentMiddleware(async_subagents=async_subagents))
-
-    if middleware:
-        deepagent_middleware.extend(middleware)
-    # Provider-specific middleware goes between user middleware and memory so
-    # that memory updates (which change the system prompt) don't invalidate the
-    # Anthropic prompt cache prefix.
-    deepagent_middleware.extend(_resolve_extra_middleware(_profile))
-    if _profile.excluded_tools:
-        deepagent_middleware.append(_ToolExclusionMiddleware(excluded=_profile.excluded_tools))
-    # Unconditional prompt caching (see general-purpose subagent comment).
-    deepagent_middleware.append(AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"))
-    if memory is not None:
-        # MemoryMiddleware applies the cache_control breakpoint only when the
-        # request model is Anthropic, making it safe to enable unconditionally.
-        deepagent_middleware.append(
-            MemoryMiddleware(
-                backend=backend,
-                sources=memory,
-                add_cache_control=True,
-            )
-        )
-    if interrupt_on is not None:
-        deepagent_middleware.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
-    # _PermissionMiddleware must be last so it sees all tools from prior middleware
-    if permissions:
-        deepagent_middleware.append(_PermissionMiddleware(rules=permissions, backend=backend))
-
-    # Assemble base prompt: use _profile.base_system_prompt if set, else
-    # BASE_AGENT_PROMPT, then append profile suffix if present.
-    # Finally prepend user system_prompt (handled below).
-    base_prompt = _profile.base_system_prompt if _profile.base_system_prompt is not None else BASE_AGENT_PROMPT
-    if _profile.system_prompt_suffix is not None:
-        base_prompt = base_prompt + "\n\n" + _profile.system_prompt_suffix
-    if system_prompt is None:
-        final_system_prompt: str | SystemMessage = base_prompt
-    elif isinstance(system_prompt, SystemMessage):
-        final_system_prompt = SystemMessage(content_blocks=[*system_prompt.content_blocks, {"type": "text", "text": f"\n\n{base_prompt}"}])
-    else:
-        # String: simple concatenation
-        final_system_prompt = system_prompt + "\n\n" + base_prompt
+    deepagent_middleware = _build_main_agent_middleware(
+        model=model,
+        backend=backend,
+        profile=_profile,
+        inline_subagents=inline_subagents,
+        async_subagents=async_subagents,
+        middleware=middleware,
+        skills=skills,
+        skills_expose_dynamic_tools=skills_expose_dynamic_tools,
+        memory=memory,
+        permissions=permissions,
+        interrupt_on=interrupt_on,
+    )
+    final_system_prompt = _build_final_system_prompt(system_prompt, _profile)
 
     return create_agent(
         model,

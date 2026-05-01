@@ -6,7 +6,6 @@ from SubAgent state chunks for real-time streaming via stream_writer.
 
 from __future__ import annotations
 
-import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from deepagents.middleware.subagents import _extract_stream_progress

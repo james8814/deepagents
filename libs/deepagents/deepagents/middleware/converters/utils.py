@@ -1,5 +1,6 @@
 """Utility functions for file format detection and conversion."""
 
+import importlib
 import logging
 from pathlib import Path
 
@@ -87,7 +88,7 @@ def detect_mime_type(path: str | Path, content: bytes | None = None) -> str:
 
     # Layer 1: Try puremagic for content-based detection (if installed)
     try:
-        import puremagic
+        puremagic = importlib.import_module("puremagic")
 
         if content:
             # puremagic returns a list of matches, sorted by confidence
@@ -95,21 +96,21 @@ def detect_mime_type(path: str | Path, content: bytes | None = None) -> str:
             if matches:
                 mime_type = matches[0].mime_type
                 if mime_type:
-                    logger.debug(f"MIME detected via puremagic: {path} -> {mime_type}")
+                    logger.debug("MIME detected via puremagic: %s -> %s", path, mime_type)
                     return mime_type
-    except ImportError:
+    except ModuleNotFoundError:
         logger.debug("puremagic not installed, using extension-based detection")
-    except Exception as e:
-        logger.debug(f"puremagic detection failed for {path}: {e}")
+    except (AttributeError, OSError, TypeError, ValueError) as exc:
+        logger.debug("puremagic detection failed for %s: %s", path, exc)
 
     # Layer 2: Extension-based detection
     mime_type = MIME_TYPE_FROM_EXT.get(ext)
     if mime_type:
-        logger.debug(f"MIME detected via extension: {path} -> {mime_type}")
+        logger.debug("MIME detected via extension: %s -> %s", path, mime_type)
         return mime_type
 
     # Layer 3: Default
-    logger.debug(f"MIME detection defaulted: {path} -> application/octet-stream")
+    logger.debug("MIME detection defaulted: %s -> application/octet-stream", path)
     return "application/octet-stream"
 
 
@@ -141,10 +142,7 @@ def is_text_mime_type(mime_type: str) -> bool:
         "application/x-sh",
         "application/x-shellscript",
     }
-    if mime_type in text_application_types:
-        return True
-
-    return False
+    return mime_type in text_application_types
 
 
 def is_binary_mime_type(mime_type: str) -> bool:

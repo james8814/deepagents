@@ -1,5 +1,7 @@
 """CSV file converter."""
 
+import csv
+from io import StringIO
 from pathlib import Path
 
 from deepagents.middleware.converters.base import BaseConverter
@@ -21,9 +23,6 @@ class CSVConverter(BaseConverter):
         Returns:
             Markdown table string.
         """
-        import csv
-        from io import StringIO
-
         if raw_content is None:
             raw_content = path.read_text(encoding="utf-8", errors="replace")
         elif isinstance(raw_content, bytes):

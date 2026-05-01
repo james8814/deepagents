@@ -6,6 +6,7 @@ These tests verify that converters meet performance requirements:
 - Large files (> 10MB): < 10 seconds with pagination support
 """
 
+import asyncio
 import tempfile
 import time
 from pathlib import Path
@@ -13,14 +14,18 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from deepagents.middleware.converters.csv import CSVConverter
+from deepagents.middleware.converters.pdf import PDFConverter
+from deepagents.middleware.converters.registry import get_default_registry
+from deepagents.middleware.converters.text import TextConverter
+from deepagents.middleware.converters.utils import detect_mime_type
+
 
 class TestTextConverterPerformance:
     """Performance tests for TextConverter."""
 
     def test_small_file_performance(self):
         """Test text conversion of small file (< 1MB equivalent) completes in < 1s."""
-        from deepagents.middleware.converters.text import TextConverter
-
         converter = TextConverter()
 
         # Create a file with ~100KB of text (approximately 25K lines)
@@ -42,8 +47,6 @@ class TestTextConverterPerformance:
 
     def test_medium_file_performance(self):
         """Test text conversion of medium file (1-5MB equivalent) completes in < 2s."""
-        from deepagents.middleware.converters.text import TextConverter
-
         converter = TextConverter()
 
         # Create a file with ~1MB of text
@@ -69,14 +72,11 @@ class TestCSVConverterPerformance:
 
     def test_small_csv_performance(self):
         """Test CSV conversion of small file (< 1000 rows) completes in < 1s."""
-        from deepagents.middleware.converters.csv import CSVConverter
-
         converter = CSVConverter()
 
         # Create CSV with 1000 rows
         lines = ["Name,Age,City,Country,Occupation"]
-        for i in range(1000):
-            lines.append(f"Person{i},{20 + i % 50},City{i % 100},Country{i % 50},Job{i % 20}")
+        lines.extend(f"Person{i},{20 + i % 50},City{i % 100},Country{i % 50},Job{i % 20}" for i in range(1000))
         content = "\n".join(lines)
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
@@ -96,14 +96,11 @@ class TestCSVConverterPerformance:
 
     def test_medium_csv_performance(self):
         """Test CSV conversion of medium file (5000-10000 rows) completes in < 3s."""
-        from deepagents.middleware.converters.csv import CSVConverter
-
         converter = CSVConverter()
 
         # Create CSV with 5000 rows
         lines = ["Name,Age,City,Country,Occupation"]
-        for i in range(5000):
-            lines.append(f"Person{i},{20 + i % 50},City{i % 100},Country{i % 50},Job{i % 20}")
+        lines.extend(f"Person{i},{20 + i % 50},City{i % 100},Country{i % 50},Job{i % 20}" for i in range(5000))
         content = "\n".join(lines)
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
@@ -127,13 +124,11 @@ class TestPDFConverterPerformance:
     @patch("deepagents.middleware.converters.pdf.pdfplumber")
     def test_small_pdf_performance(self, mock_pdfplumber):
         """Test PDF conversion of small file (< 10 pages) completes in < 2s."""
-        from deepagents.middleware.converters.pdf import PDFConverter
-
         # Mock a 5-page PDF
         mock_pages = []
         for i in range(5):
             mock_page = MagicMock()
-            mock_page.extract_text.return_value = f"Page {i+1} content with some text."
+            mock_page.extract_text.return_value = f"Page {i + 1} content with some text."
             mock_page.extract_tables.return_value = []
             mock_pages.append(mock_page)
 
@@ -163,13 +158,11 @@ class TestPDFConverterPerformance:
 
         Reading single page should be significantly faster than reading all pages.
         """
-        from deepagents.middleware.converters.pdf import PDFConverter
-
         # Mock a 100-page PDF
         mock_pages = []
         for i in range(100):
             mock_page = MagicMock()
-            mock_page.extract_text.return_value = f"Page {i+1} with substantial content. " * 50
+            mock_page.extract_text.return_value = f"Page {i + 1} with substantial content. " * 50
             mock_page.extract_tables.return_value = []
             mock_pages.append(mock_page)
 
@@ -186,7 +179,7 @@ class TestPDFConverterPerformance:
         try:
             # Time full conversion
             start_full = time.time()
-            result_full = converter.convert(temp_path)
+            _ = converter.convert(temp_path)
             duration_full = time.time() - start_full
 
             # Time single page conversion
@@ -196,8 +189,7 @@ class TestPDFConverterPerformance:
 
             # Single page should be at least 10x faster
             assert duration_page < duration_full / 10, (
-                f"Single page ({duration_page:.2f}s) should be much faster than "
-                f"full conversion ({duration_full:.2f}s)"
+                f"Single page ({duration_page:.2f}s) should be much faster than full conversion ({duration_full:.2f}s)"
             )
             assert "Page 50" in result_page
         finally:
@@ -209,8 +201,6 @@ class TestConverterRegistryPerformance:
 
     def test_registry_lookup_performance(self):
         """Test that registry lookups are fast (< 1ms per lookup)."""
-        from deepagents.middleware.converters.registry import get_default_registry
-
         registry = get_default_registry()
         mime_types = ["text/plain", "application/pdf", "text/csv", "image/png"]
 
@@ -229,8 +219,6 @@ class TestMIMETypeDetectionPerformance:
 
     def test_mime_detection_performance(self):
         """Test that MIME type detection is fast (< 10ms per file)."""
-        from deepagents.middleware.converters.utils import detect_mime_type
-
         test_paths = [
             "/path/to/document.pdf",
             "/path/to/spreadsheet.xlsx",
@@ -248,9 +236,7 @@ class TestMIMETypeDetectionPerformance:
         duration = time.time() - start
 
         avg_detection_time = duration / (100 * len(test_paths))
-        assert avg_detection_time < 0.01, (
-            f"Average MIME detection time {avg_detection_time:.4f}s, expected < 10ms"
-        )
+        assert avg_detection_time < 0.01, f"Average MIME detection time {avg_detection_time:.4f}s, expected < 10ms"
 
 
 @pytest.mark.performance
@@ -265,10 +251,6 @@ class TestAsyncConversionPerformance:
         This test verifies that multiple conversions can run concurrently
         without significant slowdown.
         """
-        import asyncio
-
-        from deepagents.middleware.converters.pdf import PDFConverter
-
         # Mock a PDF that takes some time to convert
         mock_page = MagicMock()
         mock_page.extract_text.return_value = "Content"
@@ -300,10 +282,7 @@ class TestAsyncConversionPerformance:
 
             # Concurrent conversions should not take 3x as long as sequential
             # Allow 2x for thread pool overhead
-            assert duration < 2.0, (
-                f"Concurrent conversions took {duration:.2f}s, "
-                "expected efficient parallelization"
-            )
+            assert duration < 2.0, f"Concurrent conversions took {duration:.2f}s, expected efficient parallelization"
             assert all("Content" in r for r in results)
         finally:
-            temp_path.unlink()
+            await asyncio.to_thread(temp_path.unlink)

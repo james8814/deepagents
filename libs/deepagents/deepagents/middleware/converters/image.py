@@ -1,8 +1,10 @@
 """Image file converter with placeholder support."""
 
+import importlib
 import logging
 import time
 from pathlib import Path
+from typing import ClassVar
 
 from deepagents.middleware.converters.base import BaseConverter
 
@@ -25,7 +27,7 @@ class ImageConverter(BaseConverter):
     """
 
     # Supported image extensions
-    SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".ico"}
+    SUPPORTED_EXTENSIONS: ClassVar[set[str]] = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".ico"}
 
     def convert(self, path: Path, raw_content: str | bytes | None = None) -> str:
         """Convert an image file to a placeholder Markdown.
@@ -37,6 +39,7 @@ class ImageConverter(BaseConverter):
         Returns:
             Markdown-formatted placeholder with image metadata.
         """
+        _ = raw_content
         start = time.time()
 
         if not path.exists():
@@ -62,20 +65,17 @@ class ImageConverter(BaseConverter):
         format_name = path.suffix.upper().lstrip(".")
 
         try:
-            from PIL import Image
+            image_module = importlib.import_module("PIL.Image")
 
-            with Image.open(path) as img:
+            with image_module.open(path) as img:
                 width, height = img.size
                 dimensions = f"{width} x {height} pixels"
                 if img.format:
                     format_name = img.format
-                mode = img.mode
-        except ImportError:
+        except ModuleNotFoundError:
             logger.debug("PIL not installed, skipping image dimensions")
-            mode = "Unknown"
-        except Exception as e:
-            logger.debug(f"Could not read image dimensions: {e}")
-            mode = "Unknown"
+        except (AttributeError, OSError, TypeError, ValueError) as exc:
+            logger.debug("Could not read image dimensions: %s", exc)
 
         duration = time.time() - start
         self._log_conversion(path, duration)

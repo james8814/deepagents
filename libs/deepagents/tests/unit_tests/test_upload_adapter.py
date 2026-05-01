@@ -2,15 +2,18 @@
 
 import gc
 import os
-import threading
+import shutil
 import tempfile
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 
+from deepagents.backends import CompositeBackend, FilesystemBackend, StateBackend
+from deepagents.backends.protocol import FileDownloadResponse, FileUploadResponse
 from deepagents.upload_adapter import (
-    UploadResult,
     _is_text_content,
     _resolve_backend,
     _select_strategy,
@@ -64,10 +67,7 @@ class TestStateUploadLock:
             results.append((runtime_id, lock))
 
         # Create multiple threads
-        threads = [
-            threading.Thread(target=get_lock_and_store, args=(i,))
-            for i in range(10)
-        ]
+        threads = [threading.Thread(target=get_lock_and_store, args=(i,)) for i in range(10)]
 
         for t in threads:
             t.start()
@@ -96,11 +96,9 @@ class TestStateUploadLock:
 class TestResolveBackend:
     """Tests for _resolve_backend function."""
 
-    def test_resolve_backend_instance(self):
+    def test_resolve_backend_instance(self, tmp_path):
         """Test resolving an already-instantiated backend."""
-        from deepagents.backends import FilesystemBackend
-
-        backend = FilesystemBackend(root_dir="/tmp", virtual_mode=True)
+        backend = FilesystemBackend(root_dir=str(tmp_path), virtual_mode=True)
 
         result = _resolve_backend(backend)
 
@@ -110,7 +108,9 @@ class TestResolveBackend:
         """Test resolving a factory function."""
         runtime = Mock()
         expected_backend = Mock()
-        factory = lambda rt: expected_backend
+
+        def factory(_rt):
+            return expected_backend
 
         result = _resolve_backend(factory, runtime)
 
@@ -118,7 +118,9 @@ class TestResolveBackend:
 
     def test_resolve_factory_without_runtime_raises(self):
         """Test that factory without runtime raises error."""
-        factory = lambda rt: Mock()
+
+        def factory(_rt):
+            return Mock()
 
         with pytest.raises(RuntimeError, match="requires runtime"):
             _resolve_backend(factory)
@@ -129,8 +131,6 @@ class TestSelectStrategy:
 
     def test_select_direct_for_filesystem_backend(self, tmp_path):
         """Test selecting direct strategy for FilesystemBackend."""
-        from deepagents.backends import FilesystemBackend
-
         backend = FilesystemBackend(root_dir=str(tmp_path), virtual_mode=True)
 
         strategy = _select_strategy(backend)
@@ -139,8 +139,6 @@ class TestSelectStrategy:
 
     def test_select_state_for_state_backend(self):
         """Test selecting state strategy for StateBackend."""
-        from deepagents.backends import StateBackend
-
         runtime = Mock()
         runtime.state = {"files": {}}
         backend = StateBackend(runtime)
@@ -151,23 +149,16 @@ class TestSelectStrategy:
 
     def test_select_direct_for_composite_backend(self, tmp_path):
         """Test selecting direct strategy for CompositeBackend."""
-        from deepagents.backends import CompositeBackend, FilesystemBackend
-
-        backend = CompositeBackend(
-            default=FilesystemBackend(root_dir=str(tmp_path), virtual_mode=True),
-            routes={}
-        )
+        backend = CompositeBackend(default=FilesystemBackend(root_dir=str(tmp_path), virtual_mode=True), routes={})
 
         strategy = _select_strategy(backend)
 
         assert strategy == "direct"
 
-    def test_select_direct_for_backend_with_upload_files(self):
+    def test_select_direct_for_backend_with_upload_files(self, tmp_path):
         """Test selecting direct for backend with upload_files."""
-        from deepagents.backends import FilesystemBackend
-
         # Use a real backend that has upload_files implemented
-        backend = FilesystemBackend(root_dir="/tmp", virtual_mode=True)
+        backend = FilesystemBackend(root_dir=str(tmp_path), virtual_mode=True)
 
         strategy = _select_strategy(backend)
 
@@ -197,7 +188,7 @@ class TestIsTextContent:
 
     def test_utf8_text_is_text(self):
         """Test that UTF-8 text is detected as text."""
-        assert _is_text_content("Hello, 世界!".encode("utf-8")) is True
+        assert _is_text_content("Hello, 世界!".encode()) is True
 
     def test_null_bytes_indicate_binary(self):
         """Test that null bytes indicate binary content."""
@@ -220,16 +211,10 @@ class TestUploadDirect:
 
     def test_upload_success(self):
         """Test successful direct upload."""
-        from deepagents.backends.protocol import FileDownloadResponse, FileUploadResponse
-
         backend = Mock()
         # Mock download_files for overwrite detection (file doesn't exist)
-        backend.download_files.return_value = [
-            FileDownloadResponse(path="/test.txt", content=None, error="file_not_found")
-        ]
-        backend.upload_files.return_value = [
-            FileUploadResponse(path="/test.txt", error=None)
-        ]
+        backend.download_files.return_value = [FileDownloadResponse(path="/test.txt", content=None, error="file_not_found")]
+        backend.upload_files.return_value = [FileUploadResponse(path="/test.txt", error=None)]
 
         results = _upload_direct(backend, [("/test.txt", b"content")])
 
@@ -241,16 +226,10 @@ class TestUploadDirect:
 
     def test_upload_failure(self):
         """Test failed direct upload."""
-        from deepagents.backends.protocol import FileDownloadResponse, FileUploadResponse
-
         backend = Mock()
         # Mock download_files for overwrite detection (file doesn't exist)
-        backend.download_files.return_value = [
-            FileDownloadResponse(path="/test.txt", content=None, error="file_not_found")
-        ]
-        backend.upload_files.return_value = [
-            FileUploadResponse(path="/test.txt", error="permission_denied")
-        ]
+        backend.download_files.return_value = [FileDownloadResponse(path="/test.txt", content=None, error="file_not_found")]
+        backend.upload_files.return_value = [FileUploadResponse(path="/test.txt", error="permission_denied")]
 
         results = _upload_direct(backend, [("/test.txt", b"content")])
 
@@ -259,8 +238,6 @@ class TestUploadDirect:
 
     def test_upload_multiple_files(self):
         """Test uploading multiple files."""
-        from deepagents.backends.protocol import FileDownloadResponse, FileUploadResponse
-
         backend = Mock()
         # Mock download_files for overwrite detection (files don't exist)
         backend.download_files.return_value = [
@@ -272,10 +249,13 @@ class TestUploadDirect:
             FileUploadResponse(path="/file2.txt", error=None),
         ]
 
-        results = _upload_direct(backend, [
-            ("/file1.txt", b"content1"),
-            ("/file2.txt", b"content2"),
-        ])
+        results = _upload_direct(
+            backend,
+            [
+                ("/file1.txt", b"content1"),
+                ("/file2.txt", b"content2"),
+            ],
+        )
 
         assert len(results) == 2
         assert all(r.success for r in results)
@@ -291,8 +271,6 @@ class TestUploadToState:
 
     def test_upload_text_file(self):
         """Test uploading text file to StateBackend."""
-        from deepagents.backends import StateBackend
-
         runtime = Mock()
         runtime.state = {"files": {}}
         backend = StateBackend(runtime)
@@ -309,8 +287,6 @@ class TestUploadToState:
 
     def test_upload_binary_file(self):
         """Test uploading binary file with base64 encoding."""
-        from deepagents.backends import StateBackend
-
         runtime = Mock()
         runtime.state = {"files": {}}
         backend = StateBackend(runtime)
@@ -327,8 +303,6 @@ class TestUploadToState:
 
     def test_upload_large_file_rejected(self):
         """Test that large files are rejected."""
-        from deepagents.backends import StateBackend
-
         with patch.dict(os.environ, {"DEEPAGENTS_UPLOAD_MAX_SIZE": "100"}):
             runtime = Mock()
             runtime.state = {"files": {}}
@@ -346,8 +320,6 @@ class TestUploadToState:
 
     def test_detects_overwrite(self):
         """Test that overwrite is detected (P0-3 Fix)."""
-        from deepagents.backends import StateBackend
-
         runtime = Mock()
         runtime.state = {"files": {}}
         backend = StateBackend(runtime)
@@ -364,8 +336,6 @@ class TestUploadToState:
 
     def test_empty_file_upload(self):
         """Test uploading empty file."""
-        from deepagents.backends import StateBackend
-
         runtime = Mock()
         runtime.state = {"files": {}}
         backend = StateBackend(runtime)
@@ -376,8 +346,6 @@ class TestUploadToState:
 
     def test_requires_runtime(self):
         """Test that runtime is required for StateBackend."""
-        from deepagents.backends import StateBackend
-
         runtime = Mock()
         runtime.state = {"files": {}}
         backend = StateBackend(runtime)
@@ -387,33 +355,21 @@ class TestUploadToState:
 
     def test_concurrent_uploads_to_same_runtime(self):
         """Test multiple threads uploading to the same runtime."""
-        from deepagents.backends import StateBackend
-
         runtime = Mock()
         runtime.state = {"files": {}}
         backend = StateBackend(runtime)
 
-        results = []
-        errors = []
-
         def upload_file(idx):
-            try:
-                result = _upload_to_state(
-                    backend,
-                    [(f"/file{idx}.txt", f"content{idx}".encode())],
-                    runtime=runtime
-                )
-                results.extend(result)
-            except Exception as e:
-                errors.append(e)
+            return _upload_to_state(
+                backend,
+                [(f"/file{idx}.txt", f"content{idx}".encode())],
+                runtime=runtime,
+            )
 
-        threads = [threading.Thread(target=upload_file, args=(i,)) for i in range(10)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(upload_file, i) for i in range(10)]
+            results = [r for f in futures for r in f.result()]
 
-        assert len(errors) == 0
         assert len(results) == 10
 
 
@@ -445,10 +401,8 @@ class TestUploadFallback:
 
         Note: _upload_fallback creates a new temp directory for each call.
         Overwrite detection works for files that already exist in the temp
-directory before the upload starts.
+        directory before the upload starts.
         """
-        from deepagents.backends import FilesystemBackend
-
         # Use a real FilesystemBackend with a persistent directory
         backend = FilesystemBackend(root_dir=str(tmp_path), virtual_mode=True)
 
@@ -461,10 +415,6 @@ directory before the upload starts.
         # The test verifies that if a file DID exist, it would be detected.
 
         # Actually test by creating the file in the temp dir first
-        import tempfile
-        import os
-        from pathlib import Path
-
         # Create a temp directory manually and put a file in it
         temp_dir = Path(tempfile.mkdtemp(prefix="test_upload_"))
         try:
@@ -488,7 +438,6 @@ directory before the upload starts.
             assert result2[0].previous_size == len(b"original")
         finally:
             # Cleanup
-            import shutil
             shutil.rmtree(temp_dir, ignore_errors=True)
 
 
@@ -497,8 +446,6 @@ class TestUploadFilesIntegration:
 
     def test_upload_with_filesystem_backend(self, tmp_path):
         """Test upload with real FilesystemBackend."""
-        from deepagents.backends import FilesystemBackend
-
         # Use virtual_mode=True to handle absolute paths correctly
         backend = FilesystemBackend(root_dir=str(tmp_path), virtual_mode=True)
 
@@ -510,8 +457,6 @@ class TestUploadFilesIntegration:
     @pytest.mark.xfail(reason="StateBackend requires graph context after cb79d515")
     def test_upload_with_state_backend(self):
         """Test upload with real StateBackend."""
-        from deepagents.backends import StateBackend
-
         runtime = Mock()
         runtime.state = {"files": {}}
         backend = StateBackend(runtime)
@@ -524,12 +469,11 @@ class TestUploadFilesIntegration:
     @pytest.mark.xfail(reason="StateBackend requires graph context after cb79d515")
     def test_upload_with_factory_function(self):
         """Test upload using factory function pattern."""
-        from deepagents.backends import StateBackend
-
         runtime = Mock()
         runtime.state = {"files": {}}
 
-        backend_factory = lambda rt: StateBackend(rt)
+        def backend_factory(rt):
+            return StateBackend(rt)
 
         results = upload_files(backend_factory, [("/test.txt", b"content")], runtime=runtime)
 
@@ -542,13 +486,11 @@ class TestUploadFilesIntegration:
         FilesystemBackend. StateBackend routes require special handling since
         StateBackend.upload_files() raises NotImplementedError.
         """
-        from deepagents.backends import CompositeBackend, FilesystemBackend
-
         # Use FilesystemBackend for both default and routes
         # to avoid StateBackend's NotImplementedError
         composite = CompositeBackend(
             default=FilesystemBackend(root_dir=str(tmp_path), virtual_mode=True),
-            routes={"/files/": FilesystemBackend(root_dir=str(tmp_path / "files"), virtual_mode=True)}
+            routes={"/files/": FilesystemBackend(root_dir=str(tmp_path / "files"), virtual_mode=True)},
         )
 
         files = [
@@ -568,8 +510,6 @@ class TestBoundaryConditions:
 
     def test_empty_file_upload(self, tmp_path):
         """Test uploading empty files."""
-        from deepagents.backends import FilesystemBackend
-
         # Use virtual_mode=True to handle absolute paths correctly
         backend = FilesystemBackend(root_dir=str(tmp_path), virtual_mode=True)
 
@@ -581,8 +521,6 @@ class TestBoundaryConditions:
 
     def test_exactly_1mb_file(self, tmp_path):
         """Test uploading exactly 1MB file."""
-        from deepagents.backends import FilesystemBackend
-
         # Use virtual_mode=True to handle absolute paths correctly
         backend = FilesystemBackend(root_dir=str(tmp_path), virtual_mode=True)
 
@@ -594,8 +532,6 @@ class TestBoundaryConditions:
 
     def test_just_over_1mb_file_state_backend(self):
         """Test that StateBackend rejects files just over 1MB."""
-        from deepagents.backends import StateBackend
-
         runtime = Mock()
         runtime.state = {"files": {}}
         backend = StateBackend(runtime)
@@ -609,8 +545,6 @@ class TestBoundaryConditions:
 
     def test_special_characters_in_filename(self, tmp_path):
         """Test filenames with special characters."""
-        from deepagents.backends import FilesystemBackend
-
         # Use virtual_mode=True to handle absolute paths correctly
         backend = FilesystemBackend(root_dir=str(tmp_path), virtual_mode=True)
 
@@ -632,8 +566,6 @@ class TestSecurity:
 
     def test_path_traversal_blocked(self, tmp_path):
         """Test that path traversal is blocked."""
-        from deepagents.backends import FilesystemBackend
-
         backend = FilesystemBackend(root_dir=str(tmp_path), virtual_mode=True)
 
         results = upload_files(backend, [("/../../../etc/passwd", b"content")])
@@ -643,8 +575,6 @@ class TestSecurity:
 
     def test_null_byte_blocked(self, tmp_path):
         """Test that null bytes in path are blocked."""
-        from deepagents.backends import FilesystemBackend
-
         backend = FilesystemBackend(root_dir=str(tmp_path), virtual_mode=True)
 
         results = upload_files(backend, [("/file\x00.txt", b"content")])
@@ -652,14 +582,15 @@ class TestSecurity:
         # Should fail due to path validation
         assert results[0].success is False
 
-    @pytest.mark.parametrize("path", [
-        "/../../../etc/passwd",
-        "/" + "a" * 5000,
-    ])
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/../../../etc/passwd",
+            "/" + "a" * 5000,
+        ],
+    )
     def test_invalid_paths_rejected(self, tmp_path, path):
         """Test various invalid paths are rejected."""
-        from deepagents.backends import FilesystemBackend
-
         backend = FilesystemBackend(root_dir=str(tmp_path), virtual_mode=True)
 
         results = upload_files(backend, [(path, b"content")])
@@ -673,8 +604,6 @@ class TestErrorHandling:
     @pytest.mark.xfail(reason="StateBackend requires graph context after cb79d515")
     def test_backend_read_returns_string_p0_fix(self):
         """Test P0-3 fix: backend.read() returns string, not object."""
-        from deepagents.backends import StateBackend
-
         runtime = Mock()
         runtime.state = {"files": {}}
         backend = StateBackend(runtime)
@@ -698,14 +627,12 @@ class TestErrorHandling:
     @pytest.mark.xfail(reason="StateBackend requires graph context after cb79d515")
     def test_previous_size_in_bytes_p1_fix(self):
         """Test P1 fix: previous_size is in bytes, not characters."""
-        from deepagents.backends import StateBackend
-
         runtime = Mock()
         runtime.state = {"files": {}}
         backend = StateBackend(runtime)
 
         # Upload UTF-8 content
-        utf8_content = "Hello, 世界! 🌍".encode("utf-8")
+        utf8_content = "Hello, 世界! 🌍".encode()
         result1 = upload_files(backend, [("/test.txt", utf8_content)], runtime=runtime)
         assert result1[0].success is True
 

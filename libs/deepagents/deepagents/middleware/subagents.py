@@ -320,6 +320,148 @@ _EXCLUDED_STATE_KEYS = {
 }
 
 
+def _format_task_tool_description(subagents: list["_SubagentSpec"], task_description: str | None) -> str:
+    """Build the task tool description from subagent specs."""
+    available_agents = "\n".join(f"- {spec['name']}: {spec['description']}" for spec in subagents)
+    if task_description is None:
+        return TASK_TOOL_DESCRIPTION.format(available_agents=available_agents)
+    if "{available_agents}" in task_description:
+        return task_description.format(available_agents=available_agents)
+    return task_description
+
+
+def _return_subagent_command(result: dict[str, Any], tool_call_id: str) -> Command:
+    """Convert a subagent result into a command update for the parent agent."""
+    if "messages" not in result:
+        error_msg = (
+            "CompiledSubAgent must return a state containing a 'messages' key. "
+            "Custom StateGraphs used with CompiledSubAgent should include 'messages' "
+            "in their state schema to communicate results back to the main agent."
+        )
+        raise ValueError(error_msg)
+
+    state_update = {k: v for k, v in result.items() if k not in _EXCLUDED_STATE_KEYS}
+    structured = result.get("structured_response")
+    if structured is not None:
+        if hasattr(structured, "model_dump_json"):
+            content: str = structured.model_dump_json()
+        elif dataclasses.is_dataclass(structured) and not isinstance(structured, type):
+            content = json.dumps(dataclasses.asdict(structured))
+        else:
+            content = json.dumps(structured)
+    else:
+        # Strip trailing whitespace to prevent API errors with Anthropic.
+        content = result["messages"][-1].text.rstrip() if result["messages"][-1].text else ""
+
+    return Command(
+        update={
+            **state_update,
+            "messages": [ToolMessage(content, tool_call_id=tool_call_id)],
+        }
+    )
+
+
+def _invalid_subagent_type_message(subagent_type: str, subagent_graphs: dict[str, Runnable]) -> str:
+    """Return the user-facing error for an unknown subagent type."""
+    allowed_types = ", ".join(f"`{name}`" for name in subagent_graphs)
+    return f"We cannot invoke subagent {subagent_type} because it does not exist, the only allowed types are {allowed_types}"
+
+
+def _prepare_subagent_invocation(
+    subagent_graphs: dict[str, Runnable],
+    subagent_type: str,
+    description: str,
+    runtime: ToolRuntime,
+) -> tuple[Runnable, dict[str, Any], str]:
+    """Validate runtime inputs and construct subagent invocation state."""
+    if subagent_type not in subagent_graphs:
+        raise KeyError(subagent_type)
+    if not runtime.tool_call_id:
+        value_error_msg = "Tool call ID is required for subagent invocation"
+        raise ValueError(value_error_msg)
+
+    subagent_state = {k: v for k, v in runtime.state.items() if k not in _EXCLUDED_STATE_KEYS}
+    subagent_state["messages"] = [HumanMessage(content=description)]
+    return subagent_graphs[subagent_type], subagent_state, runtime.tool_call_id
+
+
+def _build_subagent_config(runtime: ToolRuntime) -> RunnableConfig:
+    """Build trace-friendly config for subagent execution."""
+    configurable = runtime.config.get("configurable", {})
+    return {"configurable": {**configurable, "ls_agent_type": "subagent"}}
+
+
+def _should_fallback_from_stream(err: TypeError) -> bool:
+    """Return True when a runnable does not support `stream_mode`."""
+    message = str(err)
+    return "stream_mode" in message or "unexpected keyword argument" in message
+
+
+def _stream_subagent_sync(
+    subagent: Runnable,
+    subagent_state: dict[str, Any],
+    subagent_config: RunnableConfig,
+    runtime: ToolRuntime,
+    subagent_type: str,
+) -> dict[str, Any]:
+    """Execute a subagent synchronously, preferring streaming when supported."""
+    result = None
+    try:
+        for chunk in subagent.stream(subagent_state, config=subagent_config, stream_mode="values"):
+            result = chunk
+            runtime.stream_writer(_extract_stream_progress(chunk, subagent_type))
+    except TypeError as err:
+        if not _should_fallback_from_stream(err):
+            raise
+    if result is None:
+        result = subagent.invoke(subagent_state, subagent_config)
+    return cast("dict[str, Any]", result)
+
+
+async def _stream_subagent_async(
+    subagent: Runnable,
+    subagent_state: dict[str, Any],
+    subagent_config: RunnableConfig,
+    runtime: ToolRuntime,
+    subagent_type: str,
+) -> dict[str, Any]:
+    """Execute a subagent asynchronously, preferring streaming when supported."""
+    result = None
+    chunk_count = 0
+    stream_writer_count = 0
+    try:
+        async for chunk in subagent.astream(subagent_state, config=subagent_config, stream_mode="values"):
+            chunk_count += 1
+            result = chunk
+            runtime.stream_writer(_extract_stream_progress(chunk, subagent_type))
+            stream_writer_count += 1
+    except TypeError as err:
+        if _should_fallback_from_stream(err):
+            if _ENABLE_SUBAGENT_STREAM_DIAGNOSTICS:
+                logger.warning(
+                    "[DIAG] astream fallback triggered: %s | subagent=%s | runnable_type=%s",
+                    str(err),
+                    subagent_type,
+                    type(subagent).__name__,
+                )
+        else:
+            raise
+    finally:
+        if _ENABLE_SUBAGENT_STREAM_DIAGNOSTICS:
+            logger.info(
+                "[DIAG] atask complete | subagent=%s | runnable_type=%s | chunk_count=%d | stream_writer_count=%d | had_result=%s",
+                subagent_type,
+                type(subagent).__name__,
+                chunk_count,
+                stream_writer_count,
+                result is not None,
+            )
+
+    if result is None:
+        result = await subagent.ainvoke(subagent_state, subagent_config)
+    return cast("dict[str, Any]", result)
+
+
 class TaskToolSchema(BaseModel):
     """Input schema for the `task` tool."""
 
@@ -489,7 +631,7 @@ class _SubagentSpec(TypedDict):
     runnable: Runnable
 
 
-def _build_task_tool(  # noqa: C901
+def _build_task_tool(
     subagents: list[_SubagentSpec],
     task_description: str | None = None,
 ) -> BaseTool:
@@ -503,56 +645,8 @@ def _build_task_tool(  # noqa: C901
     Returns:
         A StructuredTool that can invoke subagents by type.
     """
-    # Build the graphs dict and descriptions from the unified spec list
     subagent_graphs: dict[str, Runnable] = {spec["name"]: spec["runnable"] for spec in subagents}
-    subagent_description_str = "\n".join(f"- {s['name']}: {s['description']}" for s in subagents)
-
-    # Use custom description if provided, otherwise use default template
-    if task_description is None:
-        description = TASK_TOOL_DESCRIPTION.format(available_agents=subagent_description_str)
-    elif "{available_agents}" in task_description:
-        description = task_description.format(available_agents=subagent_description_str)
-    else:
-        description = task_description
-
-    def _return_command_with_state_update(result: dict, tool_call_id: str) -> Command:
-        # Validate that the result contains a 'messages' key
-        if "messages" not in result:
-            error_msg = (
-                "CompiledSubAgent must return a state containing a 'messages' key. "
-                "Custom StateGraphs used with CompiledSubAgent should include 'messages' "
-                "in their state schema to communicate results back to the main agent."
-            )
-            raise ValueError(error_msg)
-
-        state_update = {k: v for k, v in result.items() if k not in _EXCLUDED_STATE_KEYS}
-
-        structured = result.get("structured_response")
-        if structured is not None:
-            if hasattr(structured, "model_dump_json"):
-                content: str = structured.model_dump_json()
-            elif dataclasses.is_dataclass(structured) and not isinstance(structured, type):
-                content = json.dumps(dataclasses.asdict(structured))
-            else:
-                content = json.dumps(structured)
-        else:
-            # Strip trailing whitespace to prevent API errors with Anthropic
-            content = result["messages"][-1].text.rstrip() if result["messages"][-1].text else ""
-
-        return Command(
-            update={
-                **state_update,
-                "messages": [ToolMessage(content, tool_call_id=tool_call_id)],
-            }
-        )
-
-    def _validate_and_prepare_state(subagent_type: str, description: str, runtime: ToolRuntime) -> tuple[Runnable, dict]:
-        """Prepare state for invocation."""
-        subagent = subagent_graphs[subagent_type]
-        # Create a new state dict to avoid mutating the original
-        subagent_state = {k: v for k, v in runtime.state.items() if k not in _EXCLUDED_STATE_KEYS}
-        subagent_state["messages"] = [HumanMessage(content=description)]
-        return subagent, subagent_state
+    description = _format_task_tool_description(subagents, task_description)
 
     def task(
         description: str,
@@ -560,31 +654,12 @@ def _build_task_tool(  # noqa: C901
         runtime: ToolRuntime,
     ) -> str | Command:
         if subagent_type not in subagent_graphs:
-            allowed_types = ", ".join([f"`{k}`" for k in subagent_graphs])
-            return f"We cannot invoke subagent {subagent_type} because it does not exist, the only allowed types are {allowed_types}"
-        if not runtime.tool_call_id:
-            value_error_msg = "Tool call ID is required for subagent invocation"
-            raise ValueError(value_error_msg)
-        subagent, subagent_state = _validate_and_prepare_state(subagent_type, description, runtime)
-        # Stream SubAgent execution to emit real-time progress events.
-        # Falls back to invoke() for runnables that don't support stream_mode
-        # (e.g., RunnableLambda used as CompiledSubAgent).
-        # Pass ls_agent_type via configurable for LangSmith subagent tagging.
-        # Don't merge all fields because this will block out manual `.with_config`
-        subagent_config: RunnableConfig = {"configurable": {**runtime.config.get("configurable", {}), "ls_agent_type": "subagent"}}
-        result = None
-        try:
-            for chunk in subagent.stream(subagent_state, config=subagent_config, stream_mode="values"):
-                result = chunk
-                runtime.stream_writer(_extract_stream_progress(chunk, subagent_type))
-        except TypeError as err:
-            if "stream_mode" in str(err) or "unexpected keyword argument" in str(err):
-                result = None
-            else:
-                raise
-        if result is None:
-            result = subagent.invoke(subagent_state, subagent_config)
-        return _return_command_with_state_update(result, runtime.tool_call_id)
+            return _invalid_subagent_type_message(subagent_type, subagent_graphs)
+
+        subagent, subagent_state, tool_call_id = _prepare_subagent_invocation(subagent_graphs, subagent_type, description, runtime)
+        subagent_config = _build_subagent_config(runtime)
+        result = _stream_subagent_sync(subagent, subagent_state, subagent_config, runtime, subagent_type)
+        return _return_subagent_command(result, tool_call_id)
 
     async def atask(
         description: str,
@@ -592,51 +667,12 @@ def _build_task_tool(  # noqa: C901
         runtime: ToolRuntime,
     ) -> str | Command:
         if subagent_type not in subagent_graphs:
-            allowed_types = ", ".join([f"`{k}`" for k in subagent_graphs])
-            return f"We cannot invoke subagent {subagent_type} because it does not exist, the only allowed types are {allowed_types}"
-        if not runtime.tool_call_id:
-            value_error_msg = "Tool call ID is required for subagent invocation"
-            raise ValueError(value_error_msg)
-        subagent, subagent_state = _validate_and_prepare_state(subagent_type, description, runtime)
-        # Stream SubAgent execution to emit real-time progress events.
-        # Falls back to ainvoke() for runnables that don't support stream_mode.
-        # Pass ls_agent_type via configurable for LangSmith subagent tagging.
-        # Don't merge all fields because this will block out manual `.with_config`
-        subagent_config: RunnableConfig = {"configurable": {**runtime.config.get("configurable", {}), "ls_agent_type": "subagent"}}
-        result = None
-        chunk_count = 0
-        stream_writer_count = 0
-        try:
-            async for chunk in subagent.astream(subagent_state, config=subagent_config, stream_mode="values"):
-                chunk_count += 1
-                result = chunk
-                runtime.stream_writer(_extract_stream_progress(chunk, subagent_type))
-                stream_writer_count += 1
-        except TypeError as err:
-            if "stream_mode" in str(err) or "unexpected keyword argument" in str(err):
-                if _ENABLE_SUBAGENT_STREAM_DIAGNOSTICS:
-                    logger.warning(
-                        "[DIAG] astream fallback triggered: %s | subagent=%s | runnable_type=%s",
-                        str(err),
-                        subagent_type,
-                        type(subagent).__name__,
-                    )
-                result = None
-            else:
-                raise
-        finally:
-            if _ENABLE_SUBAGENT_STREAM_DIAGNOSTICS:
-                logger.info(
-                    "[DIAG] atask complete | subagent=%s | runnable_type=%s | chunk_count=%d | stream_writer_count=%d | had_result=%s",
-                    subagent_type,
-                    type(subagent).__name__,
-                    chunk_count,
-                    stream_writer_count,
-                    result is not None,
-                )
-        if result is None:
-            result = await subagent.ainvoke(subagent_state, subagent_config)
-        return _return_command_with_state_update(result, runtime.tool_call_id)
+            return _invalid_subagent_type_message(subagent_type, subagent_graphs)
+
+        subagent, subagent_state, tool_call_id = _prepare_subagent_invocation(subagent_graphs, subagent_type, description, runtime)
+        subagent_config = _build_subagent_config(runtime)
+        result = await _stream_subagent_async(subagent, subagent_state, subagent_config, runtime, subagent_type)
+        return _return_subagent_command(result, tool_call_id)
 
     return StructuredTool.from_function(
         name="task",

@@ -4,6 +4,7 @@
 import asyncio
 import concurrent.futures
 import contextvars
+import importlib
 import inspect
 import mimetypes
 import os
@@ -16,6 +17,8 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, NotRequired, cast
 
 if TYPE_CHECKING:
     from langchain_core.runnables.config import RunnableConfig
+
+    from deepagents.middleware.converters.base import BaseConverter
 
 from langchain.agents.middleware.types import (
     AgentMiddleware,
@@ -59,6 +62,29 @@ from deepagents.backends.utils import (
     validate_path,
 )
 from deepagents.middleware._utils import append_to_system_message
+
+
+def get_default_registry() -> dict[str, "BaseConverter"] | None:
+    """Load the converter registry lazily so optional deps stay optional."""
+    try:
+        converters = importlib.import_module("deepagents.middleware.converters")
+    except ImportError:
+        return None
+    return cast("Callable[[], dict[str, BaseConverter]]", converters.get_default_registry)()
+
+
+def detect_mime_type(path: str | Path, content: bytes | None = None) -> str | None:
+    """Load MIME detection lazily so tests can still patch this module symbol."""
+    try:
+        converter_utils = importlib.import_module("deepagents.middleware.converters.utils")
+    except ImportError:
+        return None
+    detector = cast(
+        "Callable[[str | Path, bytes | None], str]",
+        converter_utils.detect_mime_type,
+    )
+    return detector(path, content)
+
 
 EMPTY_CONTENT_WARNING = "System reminder: File exists but has empty contents"
 GLOB_TIMEOUT = 20.0  # seconds
@@ -184,6 +210,31 @@ def _normalize_glob_result(result: object) -> GlobResult:
         )
         return GlobResult(matches=_coerce_file_info_list(cast("list[object]", result)))
     return GlobResult(error=f"Unexpected return type from backend.glob(): {type(result).__name__}")
+
+
+def _converter_module_unavailable_error(file_path: str) -> str:
+    ext = Path(file_path).suffix.lower()
+    return f"Error: Converter module not available for '{file_path}' (type: {ext}). Install optional dependencies: pip install deepagents[converters]"
+
+
+def _resolve_document_converter(file_path: str, raw_bytes: bytes) -> tuple["BaseConverter | None", str | None]:
+    if not callable(get_default_registry) or not callable(detect_mime_type):
+        return None, _converter_module_unavailable_error(file_path)
+
+    mime_type = detect_mime_type(file_path, raw_bytes)
+    registry = get_default_registry()
+    if mime_type is None or registry is None:
+        return None, _converter_module_unavailable_error(file_path)
+
+    converter = registry.get(mime_type)
+    if converter is None:
+        ext = Path(file_path).suffix.lower()
+        return (
+            None,
+            f"Error: No converter available for '{file_path}' (type: {ext}). Install optional dependencies: pip install deepagents[converters]",
+        )
+
+    return converter, None
 
 
 class FilesystemState(AgentState):
@@ -625,22 +676,9 @@ def _convert_document_sync(backend: BackendProtocol, file_path: str, offset: int
             f"Use FilesystemBackend or a sandbox backend instead."
         )
 
-    try:
-        from deepagents.middleware.converters import get_default_registry
-        from deepagents.middleware.converters.utils import detect_mime_type
-    except ImportError:
-        ext = Path(file_path).suffix.lower()
-        return (
-            f"Error: Converter module not available for '{file_path}' (type: {ext}). "
-            f"Install optional dependencies: pip install deepagents[converters]"
-        )
-
-    mime_type = detect_mime_type(file_path, content=raw_bytes)
-    registry = get_default_registry()
-    converter = registry.get(mime_type)
+    converter, converter_error = _resolve_document_converter(file_path, raw_bytes)
     if converter is None:
-        ext = Path(file_path).suffix.lower()
-        return f"Error: No converter available for '{file_path}' (type: {ext}). Install optional dependencies: pip install deepagents[converters]"
+        return cast("str", converter_error)
 
     suffix = Path(file_path).suffix
     tmp_fd, tmp_path = tempfile.mkstemp(suffix=suffix)
@@ -701,22 +739,9 @@ async def _convert_document_async(backend: BackendProtocol, file_path: str, offs
             f"Use FilesystemBackend or a sandbox backend instead."
         )
 
-    try:
-        from deepagents.middleware.converters import get_default_registry
-        from deepagents.middleware.converters.utils import detect_mime_type
-    except ImportError:
-        ext = Path(file_path).suffix.lower()
-        return (
-            f"Error: Converter module not available for '{file_path}' (type: {ext}). "
-            f"Install optional dependencies: pip install deepagents[converters]"
-        )
-
-    mime_type = detect_mime_type(file_path, content=raw_bytes)
-    registry = get_default_registry()
-    converter = registry.get(mime_type)
+    converter, converter_error = _resolve_document_converter(file_path, raw_bytes)
     if converter is None:
-        ext = Path(file_path).suffix.lower()
-        return f"Error: No converter available for '{file_path}' (type: {ext}). Install optional dependencies: pip install deepagents[converters]"
+        return cast("str", converter_error)
 
     def _do_convert() -> str:
         suffix = Path(file_path).suffix
@@ -934,68 +959,104 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
             args_schema=LsSchema,
         )
 
-    def _create_read_file_tool(self) -> BaseTool:  # noqa: C901
+    def _truncate_read_file_text(self, content: str, file_path: str, limit: int) -> str:
+        """Apply line- and token-based truncation to text read results."""
+        lines = content.splitlines(keepends=True)
+        if len(lines) > limit:
+            lines = lines[:limit]
+            content = "".join(lines)
+
+        token_limit = self._tool_token_limit_before_evict
+        if token_limit and len(content) >= NUM_CHARS_PER_TOKEN * token_limit:
+            truncation_msg = READ_FILE_TRUNCATION_MSG.format(file_path=file_path)
+            max_content_length = NUM_CHARS_PER_TOKEN * token_limit - len(truncation_msg)
+            content = content[:max_content_length] + truncation_msg
+
+        return content
+
+    def _truncate_binary_document_result(self, content: str, file_path: str) -> str:
+        """Apply token-based truncation to converted binary document content."""
+        token_limit = self._tool_token_limit_before_evict
+        if token_limit and len(content) >= NUM_CHARS_PER_TOKEN * token_limit:
+            truncation_msg = READ_FILE_TRUNCATION_MSG.format(file_path=file_path)
+            max_content_length = NUM_CHARS_PER_TOKEN * token_limit - len(truncation_msg)
+            return content[:max_content_length] + truncation_msg
+        return content
+
+    def _handle_read_file_result(
+        self,
+        read_result: ReadResult | str,
+        validated_path: str,
+        tool_call_id: str | None,
+        offset: int,
+        limit: int,
+    ) -> ToolMessage | str:
+        """Normalize backend read results for the read_file tool."""
+        if isinstance(read_result, str):
+            warnings.warn(
+                "Returning a plain `str` from `backend.read()` is deprecated. "
+                "Return a `ReadResult` instead. Returning `str` will not be "
+                "supported in v0.7.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            # Legacy backends already format with line numbers
+            return self._truncate_read_file_text(read_result, validated_path, limit)
+
+        if read_result.error:
+            return f"Error: {read_result.error}"
+
+        if read_result.file_data is None:
+            return f"Error: no data returned for '{validated_path}'"
+
+        file_type = _get_file_type(validated_path)
+        content = read_result.file_data["content"]
+
+        if file_type != "text":
+            mime_type = mimetypes.guess_type("file" + Path(validated_path).suffix)[0] or "application/octet-stream"
+            return ToolMessage(
+                content_blocks=cast("list[ContentBlock]", [{"type": file_type, "base64": content, "mime_type": mime_type}]),
+                name="read_file",
+                tool_call_id=tool_call_id,
+                additional_kwargs={"read_file_path": validated_path, "read_file_media_type": mime_type},
+            )
+
+        empty_msg = check_empty_content(content)
+        if empty_msg:
+            return empty_msg
+
+        numbered_content = format_content_with_line_numbers(content, start_line=offset + 1)
+        # We apply truncation again after formatting content as continuation lines
+        # can increase line count.
+        return self._truncate_read_file_text(numbered_content, validated_path, limit)
+
+    def _maybe_convert_binary_document_sync(
+        self,
+        backend: BackendProtocol,
+        validated_path: str,
+        offset: int,
+    ) -> str | None:
+        """Handle sync conversion for supported binary document formats."""
+        if Path(validated_path).suffix.lower() not in BINARY_DOC_EXTENSIONS:
+            return None
+        result = _convert_document_sync(backend, validated_path, offset=offset)
+        return self._truncate_binary_document_result(result, validated_path)
+
+    async def _maybe_convert_binary_document_async(
+        self,
+        backend: BackendProtocol,
+        validated_path: str,
+        offset: int,
+    ) -> str | None:
+        """Handle async conversion for supported binary document formats."""
+        if Path(validated_path).suffix.lower() not in BINARY_DOC_EXTENSIONS:
+            return None
+        result = await _convert_document_async(backend, validated_path, offset=offset)
+        return self._truncate_binary_document_result(result, validated_path)
+
+    def _create_read_file_tool(self) -> BaseTool:
         """Create the read_file tool."""
         tool_description = self._custom_tool_descriptions.get("read_file") or READ_FILE_TOOL_DESCRIPTION
-        token_limit = self._tool_token_limit_before_evict
-
-        def _truncate(content: str, file_path: str, limit: int) -> str:
-            lines = content.splitlines(keepends=True)
-            if len(lines) > limit:
-                lines = lines[:limit]
-                content = "".join(lines)
-
-            if token_limit and len(content) >= NUM_CHARS_PER_TOKEN * token_limit:
-                truncation_msg = READ_FILE_TRUNCATION_MSG.format(file_path=file_path)
-                max_content_length = NUM_CHARS_PER_TOKEN * token_limit - len(truncation_msg)
-                content = content[:max_content_length] + truncation_msg
-
-            return content
-
-        def _handle_read_result(
-            read_result: ReadResult | str,
-            validated_path: str,
-            tool_call_id: str | None,
-            offset: int,
-            limit: int,
-        ) -> ToolMessage | str:
-            if isinstance(read_result, str):
-                warnings.warn(
-                    "Returning a plain `str` from `backend.read()` is deprecated. "
-                    "Return a `ReadResult` instead. Returning `str` will not be "
-                    "supported in v0.7.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-                # Legacy backends already format with line numbers
-                return _truncate(read_result, validated_path, limit)
-
-            if read_result.error:
-                return f"Error: {read_result.error}"
-
-            if read_result.file_data is None:
-                return f"Error: no data returned for '{validated_path}'"
-
-            file_type = _get_file_type(validated_path)
-            content = read_result.file_data["content"]
-
-            if file_type != "text":
-                mime_type = mimetypes.guess_type("file" + Path(validated_path).suffix)[0] or "application/octet-stream"
-                return ToolMessage(
-                    content_blocks=cast("list[ContentBlock]", [{"type": file_type, "base64": content, "mime_type": mime_type}]),
-                    name="read_file",
-                    tool_call_id=tool_call_id,
-                    additional_kwargs={"read_file_path": validated_path, "read_file_media_type": mime_type},
-                )
-
-            empty_msg = check_empty_content(content)
-            if empty_msg:
-                return empty_msg
-
-            content = format_content_with_line_numbers(content, start_line=offset + 1)
-            # We apply truncation again after formatting content as continuation lines
-            # can increase line count
-            return _truncate(content, validated_path, limit)
 
         def sync_read_file(
             file_path: Annotated[str, "Absolute path to the file to read. Must be absolute, not relative."],
@@ -1010,19 +1071,12 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
             except ValueError as e:
                 return f"Error: {e}"
 
-            # Local enhancement: binary document conversion (PDF/DOCX/XLSX/PPTX)
-            # Images are handled by upstream's _handle_read_result via ReadResult
-            ext = Path(validated_path).suffix.lower()
-            if ext in BINARY_DOC_EXTENSIONS:
-                result = _convert_document_sync(resolved_backend, validated_path, offset=offset)
-                if token_limit and len(result) >= NUM_CHARS_PER_TOKEN * token_limit:
-                    truncation_msg = READ_FILE_TRUNCATION_MSG.format(file_path=validated_path)
-                    max_content_length = NUM_CHARS_PER_TOKEN * token_limit - len(truncation_msg)
-                    result = result[:max_content_length] + truncation_msg
-                return result
+            binary_result = self._maybe_convert_binary_document_sync(resolved_backend, validated_path, offset)
+            if binary_result is not None:
+                return binary_result
 
             read_result = resolved_backend.read(validated_path, offset=offset, limit=limit)
-            return _handle_read_result(read_result, validated_path, runtime.tool_call_id, offset, limit)
+            return self._handle_read_file_result(read_result, validated_path, runtime.tool_call_id, offset, limit)
 
         async def async_read_file(
             file_path: Annotated[str, "Absolute path to the file to read. Must be absolute, not relative."],
@@ -1037,18 +1091,12 @@ class FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT]
             except ValueError as e:
                 return f"Error: {e}"
 
-            # Local enhancement: binary document conversion (PDF/DOCX/XLSX/PPTX)
-            ext = Path(validated_path).suffix.lower()
-            if ext in BINARY_DOC_EXTENSIONS:
-                result = await _convert_document_async(resolved_backend, validated_path, offset=offset)
-                if token_limit and len(result) >= NUM_CHARS_PER_TOKEN * token_limit:
-                    truncation_msg = READ_FILE_TRUNCATION_MSG.format(file_path=validated_path)
-                    max_content_length = NUM_CHARS_PER_TOKEN * token_limit - len(truncation_msg)
-                    result = result[:max_content_length] + truncation_msg
-                return result
+            binary_result = await self._maybe_convert_binary_document_async(resolved_backend, validated_path, offset)
+            if binary_result is not None:
+                return binary_result
 
             read_result = await resolved_backend.aread(validated_path, offset=offset, limit=limit)
-            return _handle_read_result(read_result, validated_path, runtime.tool_call_id, offset, limit)
+            return self._handle_read_file_result(read_result, validated_path, runtime.tool_call_id, offset, limit)
 
         return StructuredTool.from_function(
             name="read_file",

@@ -10,10 +10,11 @@ from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+SLOW_CONVERSION_WARNING_SECONDS = 5.0
 
 
 class BaseConverter(ABC):
-    """Abstract base class for file format converters.
+    r"""Abstract base class for file format converters.
 
     Subclasses implement the `convert` method to transform a specific
     file format into Markdown. Common utilities like table formatting
@@ -70,7 +71,9 @@ class BaseConverter(ABC):
             NotImplementedError: If the converter doesn't support pagination.
             ValueError: If page number is out of range.
         """
-        raise NotImplementedError("This converter does not support pagination")
+        _ = path, page, raw_content
+        msg = "This converter does not support pagination"
+        raise NotImplementedError(msg)
 
     def get_total_pages(self, path: Path) -> int | None:
         """Get the total number of pages in the document.
@@ -83,6 +86,7 @@ class BaseConverter(ABC):
         Returns:
             Total number of pages, or None if not supported.
         """
+        _ = path
         return None
 
     def _format_as_table(self, rows: list[list[Any]], headers: list[str] | None = None) -> str:
@@ -112,7 +116,7 @@ class BaseConverter(ABC):
             return "\n".join(" ".join(row) for row in str_rows)
 
         # Calculate column widths
-        all_rows = [headers] + str_rows
+        all_rows = [headers, *str_rows]
         col_widths = [max(len(row[i]) if i < len(row) else 0 for row in all_rows) for i in range(len(headers))]
 
         # Build table
@@ -142,7 +146,11 @@ class BaseConverter(ABC):
             page: Optional page number for paginated conversions.
         """
         page_info = f" (page {page})" if page else ""
-        logger.info(f"Converted {path.name}{page_info} in {duration:.2f}s")
+        logger.info("Converted %s%s in %.2fs", path.name, page_info, duration)
 
-        if duration > 5.0:
-            logger.warning(f"Conversion took {duration:.2f}s for {path.name}. Consider using pagination for large files.")
+        if duration > SLOW_CONVERSION_WARNING_SECONDS:
+            logger.warning(
+                "Conversion took %.2fs for %s. Consider using pagination for large files.",
+                duration,
+                path.name,
+            )

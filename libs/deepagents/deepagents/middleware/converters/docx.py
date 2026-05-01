@@ -1,12 +1,43 @@
 """Word document converter using python-docx."""
 
+import importlib
 import logging
 import time
 from pathlib import Path
+from typing import Protocol
 
 from deepagents.middleware.converters.base import BaseConverter
 
 logger = logging.getLogger(__name__)
+HEADING_PREFIXES = {
+    "heading 1": "#",
+    "heading 2": "##",
+    "heading 3": "###",
+    "heading 4": "####",
+    "heading 5": "#####",
+    "heading 6": "######",
+}
+
+
+class _ParagraphStyle(Protocol):
+    name: str
+
+
+class _Paragraph(Protocol):
+    text: str
+    style: _ParagraphStyle | None
+
+
+class _TableCell(Protocol):
+    text: str
+
+
+class _TableRow(Protocol):
+    cells: list[_TableCell]
+
+
+class _Table(Protocol):
+    rows: list[_TableRow]
 
 
 class DOCXConverter(BaseConverter):
@@ -32,47 +63,27 @@ class DOCXConverter(BaseConverter):
         Returns:
             Markdown-formatted string.
         """
-        from docx import Document
+        _ = raw_content
+        try:
+            document_factory = importlib.import_module("docx").Document
+        except ModuleNotFoundError as e:
+            msg = "Missing optional dependency `python-docx`. Install with `pip install python-docx`."
+            raise ModuleNotFoundError(msg) from e
 
         start = time.time()
 
-        doc = Document(str(path))
+        doc = document_factory(str(path))
         parts = []
 
         for para in doc.paragraphs:
-            text = para.text.strip()
-            if not text:
-                continue
-
-            # Check style for heading level
-            style_name = para.style.name.lower() if para.style else ""
-
-            if "heading 1" in style_name:
-                parts.append(f"# {text}\n")
-            elif "heading 2" in style_name:
-                parts.append(f"## {text}\n")
-            elif "heading 3" in style_name:
-                parts.append(f"### {text}\n")
-            elif "heading 4" in style_name:
-                parts.append(f"#### {text}\n")
-            elif "heading 5" in style_name:
-                parts.append(f"##### {text}\n")
-            elif "heading 6" in style_name:
-                parts.append(f"###### {text}\n")
-            elif "list" in style_name:
-                # Handle list items
-                parts.append(f"- {text}")
-            else:
-                parts.append(text)
+            formatted_paragraph = self._format_paragraph(para)
+            if formatted_paragraph:
+                parts.append(formatted_paragraph)
 
         # Extract tables
         for i, table in enumerate(doc.tables, start=1):
             parts.append(f"\n### Table {i}\n")
-
-            rows = []
-            for row in table.rows:
-                row_data = [cell.text.strip() for cell in row.cells]
-                rows.append(row_data)
+            rows = self._extract_table_rows(table)
 
             if rows:
                 headers = rows[0]
@@ -83,3 +94,20 @@ class DOCXConverter(BaseConverter):
         self._log_conversion(path, duration)
 
         return "\n\n".join(parts)
+
+    def _format_paragraph(self, para: _Paragraph) -> str:
+        text = para.text.strip()
+        if not text:
+            return ""
+
+        style_name = para.style.name.lower() if para.style else ""
+        for heading_name, prefix in HEADING_PREFIXES.items():
+            if heading_name in style_name:
+                return f"{prefix} {text}\n"
+
+        if "list" in style_name:
+            return f"- {text}"
+        return text
+
+    def _extract_table_rows(self, table: _Table) -> list[list[str]]:
+        return [[cell.text.strip() for cell in row.cells] for row in table.rows]

@@ -1,5 +1,6 @@
 """PDF file converter using pdfplumber."""
 
+import importlib
 import logging
 import time
 from pathlib import Path
@@ -31,7 +32,12 @@ class PDFConverter(BaseConverter):
         Returns:
             Markdown-formatted string with all pages.
         """
-        import pdfplumber
+        _ = raw_content
+        try:
+            pdfplumber = importlib.import_module("pdfplumber")
+        except ModuleNotFoundError as e:
+            msg = "Missing optional dependency `pdfplumber`. Install with `pip install pdfplumber`."
+            raise ModuleNotFoundError(msg) from e
 
         start = time.time()
         parts = []
@@ -86,7 +92,12 @@ class PDFConverter(BaseConverter):
         Raises:
             ValueError: If page number is out of range.
         """
-        import pdfplumber
+        _ = raw_content
+        try:
+            pdfplumber = importlib.import_module("pdfplumber")
+        except ModuleNotFoundError as e:
+            msg = "Missing optional dependency `pdfplumber`. Install with `pip install pdfplumber`."
+            raise ModuleNotFoundError(msg) from e
 
         start = time.time()
 
@@ -94,7 +105,8 @@ class PDFConverter(BaseConverter):
             total_pages = len(pdf.pages)
 
             if page < 1 or page > total_pages:
-                raise ValueError(f"Page {page} out of range. Document has {total_pages} pages.")
+                msg = f"Page {page} out of range. Document has {total_pages} pages."
+                raise ValueError(msg)
 
             pdf_page = pdf.pages[page - 1]
             text = pdf_page.extract_text() or ""
@@ -125,7 +137,11 @@ class PDFConverter(BaseConverter):
         Returns:
             Total number of pages.
         """
-        import pdfplumber
+        try:
+            pdfplumber = importlib.import_module("pdfplumber")
+        except ModuleNotFoundError as e:
+            msg = "Missing optional dependency `pdfplumber`. Install with `pip install pdfplumber`."
+            raise ModuleNotFoundError(msg) from e
 
         with pdfplumber.open(path) as pdf:
             return len(pdf.pages)

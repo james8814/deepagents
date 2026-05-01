@@ -68,6 +68,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.ruff]
 line-length = 150
+extend-exclude = ["**/._*"]
 
 [tool.ruff.format]
 docstring-code-format = true  # Formats code blocks in docstrings
@@ -83,6 +84,7 @@ ignore = [
     "SLF001",  # Access to a private member of an external class
     "PLR0913", # Too many arguments to function definition
     "PLC0414", # Import alias does not rename original package — conflicts with type-checker re-export conventions
+    "EXE002",  # Executable-bit checks are unreliable in some filesystems; CI still protects 100755 scripts elsewhere
 ]
 unfixable = ["B028"]  # Rules that shouldn't be auto-fixed
 extend-safe-fixes = ["PLR6201"]
@@ -136,6 +138,9 @@ markers = [
 
 [tool.ty.environment]
 python-version = "3.11"
+
+[tool.ty.src]
+exclude = ["**/._*"]
 
 [tool.ty.rules]
 # Most rules are enabled by default. Enable rules that are disabled by default:

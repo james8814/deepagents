@@ -1,15 +1,61 @@
 """Converter registry for mapping MIME types to converters."""
 
-import logging
-from typing import TypeAlias
 import importlib
+import logging
+from functools import lru_cache
 
 from deepagents.middleware.converters.base import BaseConverter
 
 logger = logging.getLogger(__name__)
 
-# Type alias for the registry
-ConverterRegistry: TypeAlias = dict[str, BaseConverter]
+ConverterRegistry = dict[str, BaseConverter]
+
+TEXT_MIME_TYPES = (
+    "text/plain",
+    "text/markdown",
+    "text/x-python",
+    "text/javascript",
+    "text/typescript",
+    "text/x-java",
+    "text/x-c",
+    "text/x-c++",
+    "text/x-rust",
+    "text/x-go",
+    "text/x-ruby",
+    "text/x-php",
+    "text/x-shellscript",
+    "application/json",
+    "application/xml",
+    "application/x-yaml",
+    "application/x-sql",
+)
+
+
+def _load_converter(module_name: str, class_name: str) -> BaseConverter:
+    module = importlib.import_module(module_name)
+    converter_cls = getattr(module, class_name)
+    return converter_cls()
+
+
+def _register_shared_converter(registry: ConverterRegistry, mime_types: tuple[str, ...], converter: BaseConverter) -> None:
+    for mime_type in mime_types:
+        registry[mime_type] = converter
+
+
+def _try_register_optional_converter(
+    registry: ConverterRegistry,
+    mime_types: tuple[str, ...],
+    module_name: str,
+    class_name: str,
+    message: str,
+) -> None:
+    try:
+        converter = _load_converter(module_name, class_name)
+    except ImportError:
+        logger.debug(message)
+        return
+
+    _register_shared_converter(registry, mime_types, converter)
 
 
 def _create_default_registry() -> ConverterRegistry:
@@ -24,99 +70,69 @@ def _create_default_registry() -> ConverterRegistry:
     registry: ConverterRegistry = {}
 
     # Text converter (always available, no dependencies)
-    text_mod = importlib.import_module("deepagents.middleware.converters.text")
-    TextConverter = getattr(text_mod, "TextConverter")
-    text_converter = TextConverter()
-    registry["text/plain"] = text_converter
-    registry["text/markdown"] = text_converter
-    registry["text/x-python"] = text_converter
-    registry["text/javascript"] = text_converter
-    registry["text/typescript"] = text_converter
-    registry["text/x-java"] = text_converter
-    registry["text/x-c"] = text_converter
-    registry["text/x-c++"] = text_converter
-    registry["text/x-rust"] = text_converter
-    registry["text/x-go"] = text_converter
-    registry["text/x-ruby"] = text_converter
-    registry["text/x-php"] = text_converter
-    registry["text/x-shellscript"] = text_converter
-    registry["application/json"] = text_converter
-    registry["application/xml"] = text_converter
-    registry["application/x-yaml"] = text_converter
-    registry["application/x-sql"] = text_converter
-
-    # PDF converter (optional: pdfplumber)
-    try:
-        pdf_mod = importlib.import_module("deepagents.middleware.converters.pdf")
-        PDFConverter = getattr(pdf_mod, "PDFConverter")
-        pdf_converter = PDFConverter()
-        registry["application/pdf"] = pdf_converter
-    except ImportError:
-        logger.debug("PDF converter not available (install pdfplumber)")
+    text_converter = _load_converter("deepagents.middleware.converters.text", "TextConverter")
+    _register_shared_converter(registry, TEXT_MIME_TYPES, text_converter)
 
     # CSV converter (no dependencies beyond stdlib)
-    csv_mod = importlib.import_module("deepagents.middleware.converters.csv")
-    CSVConverter = getattr(csv_mod, "CSVConverter")
-    csv_converter = CSVConverter()
-    registry["text/csv"] = csv_converter
+    registry["text/csv"] = _load_converter("deepagents.middleware.converters.csv", "CSVConverter")
 
-    # Excel converter (optional: openpyxl)
-    try:
-        xlsx_mod = importlib.import_module("deepagents.middleware.converters.xlsx")
-        XLSXConverter = getattr(xlsx_mod, "XLSXConverter")
-        xlsx_converter = XLSXConverter()
-        registry["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"] = xlsx_converter
-        registry["application/vnd.ms-excel"] = xlsx_converter
-    except ImportError:
-        logger.debug("XLSX converter not available (install openpyxl)")
-
-    # Word converter (optional: python-docx)
-    try:
-        docx_mod = importlib.import_module("deepagents.middleware.converters.docx")
-        DOCXConverter = getattr(docx_mod, "DOCXConverter")
-        docx_converter = DOCXConverter()
-        registry["application/vnd.openxmlformats-officedocument.wordprocessingml.document"] = docx_converter
-        registry["application/msword"] = docx_converter
-    except ImportError:
-        logger.debug("DOCX converter not available (install python-docx)")
-
-    # PowerPoint converter (optional: python-pptx)
-    try:
-        pptx_mod = importlib.import_module("deepagents.middleware.converters.pptx")
-        PPTXConverter = getattr(pptx_mod, "PPTXConverter")
-        pptx_converter = PPTXConverter()
-        registry["application/vnd.openxmlformats-officedocument.presentationml.presentation"] = pptx_converter
-        registry["application/vnd.ms-powerpoint"] = pptx_converter
-    except ImportError:
-        logger.debug("PPTX converter not available (install python-pptx)")
+    _try_register_optional_converter(
+        registry,
+        ("application/pdf",),
+        "deepagents.middleware.converters.pdf",
+        "PDFConverter",
+        "PDF converter not available (install pdfplumber)",
+    )
+    _try_register_optional_converter(
+        registry,
+        (
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.ms-excel",
+        ),
+        "deepagents.middleware.converters.xlsx",
+        "XLSXConverter",
+        "XLSX converter not available (install openpyxl)",
+    )
+    _try_register_optional_converter(
+        registry,
+        (
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/msword",
+        ),
+        "deepagents.middleware.converters.docx",
+        "DOCXConverter",
+        "DOCX converter not available (install python-docx)",
+    )
+    _try_register_optional_converter(
+        registry,
+        (
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "application/vnd.ms-powerpoint",
+        ),
+        "deepagents.middleware.converters.pptx",
+        "PPTXConverter",
+        "PPTX converter not available (install python-pptx)",
+    )
 
     # Image converter (basic placeholder support)
-    image_mod = importlib.import_module("deepagents.middleware.converters.image")
-    ImageConverter = getattr(image_mod, "ImageConverter")
-    image_converter = ImageConverter()
-    registry["image/png"] = image_converter
-    registry["image/jpeg"] = image_converter
-    registry["image/gif"] = image_converter
-    registry["image/webp"] = image_converter
-    registry["image/svg+xml"] = image_converter
+    image_converter = _load_converter("deepagents.middleware.converters.image", "ImageConverter")
+    _register_shared_converter(
+        registry,
+        ("image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"),
+        image_converter,
+    )
 
     return registry
 
 
-# Lazy-loaded default registry
-_DEFAULT_REGISTRY: ConverterRegistry | None = None
-
-
+@lru_cache(maxsize=1)
 def get_default_registry() -> ConverterRegistry:
     """Get the default converter registry (lazy initialization).
 
     Returns:
         The default converter registry.
     """
-    global _DEFAULT_REGISTRY
-    if _DEFAULT_REGISTRY is None:
-        _DEFAULT_REGISTRY = _create_default_registry()
-    return _DEFAULT_REGISTRY
+    return _create_default_registry()
 
 
 class ConverterRegistryManager:

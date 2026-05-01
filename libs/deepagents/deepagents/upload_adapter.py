@@ -32,7 +32,6 @@ import shutil
 import tempfile
 import threading
 import weakref
-from collections.abc import Callable
 from dataclasses import dataclass
 from functools import cache
 from importlib import import_module
@@ -40,6 +39,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from types import ModuleType
 
     from deepagents.backends.protocol import BackendProtocol, FileOperationError

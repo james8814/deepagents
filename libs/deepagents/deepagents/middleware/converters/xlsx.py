@@ -1,5 +1,6 @@
 """Excel file converter using openpyxl."""
 
+import importlib
 import logging
 import time
 from pathlib import Path
@@ -28,7 +29,12 @@ class XLSXConverter(BaseConverter):
         Returns:
             Markdown-formatted string with all sheets as tables.
         """
-        import openpyxl
+        _ = raw_content
+        try:
+            openpyxl = importlib.import_module("openpyxl")
+        except ModuleNotFoundError as e:
+            msg = "Missing optional dependency `openpyxl`. Install with `pip install openpyxl`."
+            raise ModuleNotFoundError(msg) from e
 
         start = time.time()
 

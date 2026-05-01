@@ -4,21 +4,16 @@ Covers the V3.1 test matrix: converter lookup, tempfile handling,
 pagination, null guards, async paths, error messages, and cleanup.
 """
 
-import asyncio
-import sys
 from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from deepagents.backends.protocol import FileDownloadResponse
 from deepagents.middleware.filesystem import _convert_document_async, _convert_document_sync
 
-
 # ---------------------------------------------------------------------------
 # Fake backends
 # ---------------------------------------------------------------------------
+
 
 class _BackendSync:
     """Minimal sync backend returning pre-loaded payloads."""
@@ -55,6 +50,7 @@ class _BackendAsyncAwaitable(_BackendSync):
 # Fake converter for mocking the registry
 # ---------------------------------------------------------------------------
 
+
 class _FakeConverter:
     """Converter that returns canned Markdown without real file I/O."""
 
@@ -88,14 +84,6 @@ class _FakeConverter:
         return self._page_result.format(page=page)
 
 
-def _patch_converter(converter: _FakeConverter, mime: str = "application/pdf"):
-    """Context manager that patches MIME detection and registry to return the given converter."""
-    return patch.multiple(
-        "deepagents.middleware.filesystem",
-        # We patch via the lazy imports inside the function
-    )
-
-
 # Helper to patch the converter lookup inside _convert_document_sync/async
 def _make_registry_patch(converter: _FakeConverter, mime: str = "application/pdf"):
     """Return patches for detect_mime_type and get_default_registry."""
@@ -103,8 +91,8 @@ def _make_registry_patch(converter: _FakeConverter, mime: str = "application/pdf
     mock_registry = {mime: converter}
     mock_get_registry = MagicMock(return_value=mock_registry)
     return (
-        patch("deepagents.middleware.converters.utils.detect_mime_type", mock_detect),
-        patch("deepagents.middleware.converters.get_default_registry", mock_get_registry),
+        patch("deepagents.middleware.filesystem.detect_mime_type", mock_detect),
+        patch("deepagents.middleware.filesystem.get_default_registry", mock_get_registry),
     )
 
 
@@ -112,8 +100,25 @@ def _make_registry_patch(converter: _FakeConverter, mime: str = "application/pdf
 # 1. Normal conversion flow (PDF/DOCX/XLSX/PPTX with mock converter)
 # ---------------------------------------------------------------------------
 
+
 class TestNormalConversion:
     """Test successful document conversion via mock converters."""
+
+    def test_detect_mime_type_receives_raw_bytes_positionally(self, tmp_path: Path) -> None:
+        """Raw bytes are passed as the second positional arg for MIME detection."""
+        file_path = str(tmp_path / "report.pdf")
+        payload = b"%PDF-fake-content"
+        backend = _BackendSync({file_path: payload})
+        converter = _FakeConverter()
+        mock_detect = MagicMock(return_value="application/pdf")
+        mock_get_registry = MagicMock(return_value={"application/pdf": converter})
+        with (
+            patch("deepagents.middleware.filesystem.detect_mime_type", mock_detect),
+            patch("deepagents.middleware.filesystem.get_default_registry", mock_get_registry),
+        ):
+            _convert_document_sync(backend, file_path, offset=0)
+
+        mock_detect.assert_called_once_with(file_path, payload)
 
     def test_pdf_full_conversion(self, tmp_path: Path) -> None:
         """offset=0 calls converter.convert() for full document."""
@@ -154,7 +159,7 @@ class TestNormalConversion:
 
         patch_detect, patch_registry = _make_registry_patch(converter, mime=mime)
         with patch_detect, patch_registry:
-            result = _convert_document_sync(backend, file_path, offset=0)
+            _convert_document_sync(backend, file_path, offset=0)
 
         assert converter.convert_called
 
@@ -168,7 +173,7 @@ class TestNormalConversion:
 
         patch_detect, patch_registry = _make_registry_patch(converter, mime=mime)
         with patch_detect, patch_registry:
-            result = _convert_document_sync(backend, file_path, offset=0)
+            _convert_document_sync(backend, file_path, offset=0)
 
         assert converter.convert_called
 
@@ -176,6 +181,7 @@ class TestNormalConversion:
 # ---------------------------------------------------------------------------
 # 2. Pagination tests
 # ---------------------------------------------------------------------------
+
 
 class TestPagination:
     """Test page-level reading via offset parameter."""
@@ -201,13 +207,13 @@ class TestPagination:
 
         patch_detect, patch_registry = _make_registry_patch(converter)
         with patch_detect, patch_registry:
-            result = _convert_document_sync(backend, file_path, offset=0)
+            _convert_document_sync(backend, file_path, offset=0)
 
         assert converter.convert_called
         assert converter.convert_page_called_with is None
 
     def test_offset_exceeds_total_pages(self, tmp_path: Path) -> None:
-        """offset > total_pages returns range error."""
+        """Offset > total_pages returns range error."""
         file_path = str(tmp_path / "report.pdf")
         backend = _BackendSync({file_path: b"%PDF-fake"})
         converter = _FakeConverter(paginated=True, total_pages=5)
@@ -242,7 +248,7 @@ class TestPagination:
         patch_detect, patch_registry = _make_registry_patch(converter)
         with patch_detect, patch_registry:
             # Should NOT raise TypeError from `offset > None`
-            result = _convert_document_sync(backend, file_path, offset=3)
+            _convert_document_sync(backend, file_path, offset=3)
 
         # With null total_pages, the boundary check is skipped; convert_page is called
         assert converter.convert_page_called_with == 3
@@ -256,7 +262,7 @@ class TestPagination:
         mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         patch_detect, patch_registry = _make_registry_patch(converter, mime=mime)
         with patch_detect, patch_registry:
-            result = _convert_document_sync(backend, file_path, offset=3)
+            _convert_document_sync(backend, file_path, offset=3)
 
         # Non-paginated: falls through to full convert
         assert converter.convert_called
@@ -267,6 +273,7 @@ class TestPagination:
 # 3. Error handling tests
 # ---------------------------------------------------------------------------
 
+
 class TestErrorHandling:
     """Test error paths: missing deps, unknown formats, StateBackend, etc."""
 
@@ -275,10 +282,10 @@ class TestErrorHandling:
         file_path = str(tmp_path / "report.pdf")
         backend = _BackendSync({file_path: b"%PDF-fake"})
 
-        with patch.dict(sys.modules, {
-            "deepagents.middleware.converters": None,
-            "deepagents.middleware.converters.utils": None,
-        }):
+        with (
+            patch("deepagents.middleware.filesystem.get_default_registry", None),
+            patch("deepagents.middleware.filesystem.detect_mime_type", None),
+        ):
             result = _convert_document_sync(backend, file_path, offset=0)
 
         assert "Install optional dependencies" in result or "Converter module not available" in result
@@ -333,6 +340,7 @@ class TestErrorHandling:
 # 4. Temp file cleanup tests
 # ---------------------------------------------------------------------------
 
+
 class TestTempFileCleanup:
     """Verify temp files are cleaned up on normal and exception paths."""
 
@@ -345,7 +353,7 @@ class TestTempFileCleanup:
         created_tmp_files: list[str] = []
         original_mkstemp = __import__("tempfile").mkstemp
 
-        def tracking_mkstemp(**kwargs):
+        def tracking_mkstemp(**kwargs: object):
             fd, path = original_mkstemp(**kwargs)
             created_tmp_files.append(path)
             return fd, path
@@ -369,7 +377,7 @@ class TestTempFileCleanup:
         created_tmp_files: list[str] = []
         original_mkstemp = __import__("tempfile").mkstemp
 
-        def tracking_mkstemp(**kwargs):
+        def tracking_mkstemp(**kwargs: object):
             fd, path = original_mkstemp(**kwargs)
             created_tmp_files.append(path)
             return fd, path
@@ -386,6 +394,7 @@ class TestTempFileCleanup:
 # ---------------------------------------------------------------------------
 # 5. Async path tests
 # ---------------------------------------------------------------------------
+
 
 class TestAsyncPath:
     """Test _convert_document_async with both awaitable and non-awaitable backends."""
@@ -424,7 +433,7 @@ class TestAsyncPath:
 
         patch_detect, patch_registry = _make_registry_patch(converter)
         with patch_detect, patch_registry:
-            result = await _convert_document_async(backend, file_path, offset=3)
+            await _convert_document_async(backend, file_path, offset=3)
 
         assert converter.convert_page_called_with == 3
 
@@ -440,6 +449,7 @@ class TestAsyncPath:
 # ---------------------------------------------------------------------------
 # 6. Token truncation test
 # ---------------------------------------------------------------------------
+
 
 class TestTokenTruncation:
     """Test that large converter output gets truncated by the token limit."""
