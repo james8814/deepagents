@@ -458,7 +458,7 @@ class OPDCAHealthMonitor:
 |------|------|------|------|---------|
 | **R-1** | 实现 `pmagent/src/agent_assembly/middleware/subagent_telemetry.py`：2 dataclass (Dispatch/Return) + Protocol + `SubAgentTelemetryMiddleware`（继承 `AgentMiddleware`，override `wrap_tool_call` / `awrap_tool_call`）| 0.5 d | **pmagent 团队** | pmagent Phase 1.6 完成 ✅ |
 | **R-2** | 在 `pmagent/src/agent_assembly/builders.py:build_main_middleware` 装配 `SubAgentTelemetryMiddleware`（在 `SubAgentObservability` 之后）| 0.25 d | **pmagent 团队** | R-1 完成 |
-| **R-3** | 单元测试：hook 容错（hook 抛异常不传播给 parent）+ 多订阅者 + sync/async 双路径 + task tool 拦截 vs 其他 tool pass-through | 0.5 d | **pmagent 团队** | R-2 完成 |
+| **R-3** | 单元测试：hook 容错（hook 抛异常不传播给 parent）+ 多订阅者 + sync/async 双路径 + task tool 拦截 vs 其他 tool pass-through + **对照测试覆盖（D2-A1 修订，应用 ADR v5 #22 + #23）**: ① 嵌套 SubAgent（subagent 调用 subagent）hook 是否触发 ② async dispatch 路径 vs sync dispatch 路径双路径覆盖 ③ 多 hook 订阅者 firing 顺序对照 | 0.5 d | **pmagent 团队** | R-2 完成 |
 | **R-4** | invariant 测试增补（test_assembly_invariants.py 加 T-14: SubAgentTelemetryMiddleware 装配位置 = SubAgentObservability 之后）| 0.25 d | **pmagent 团队** | R-3 完成 |
 | **R-5** | pmagent 业务 hook 实现：`SlowResponseDiagnostics`（Track 2 P2 慢响应根因调查）+ `OPDCAHealthMonitor`（OPDCA workflow 健康度）| 1 d | **pmagent 团队** | R-4 完成 |
 | **R-6** | 用 R-5 重跑 Phase A Test A，定性 62 秒慢响应根因（Track 2 P2 闭环）| 0.5 d | **pmagent 团队** | R-5 完成 |
