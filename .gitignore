@@ -224,6 +224,8 @@ libs/cli/TEXTUAL_PROGRESS.md
 # macOS
 .DS_Store
 */tmp/.DS_Store
+# macOS exFAT resource forks（外部 volume 自动生成的 ._* 副本）
+**/._*
 
 CLAUDE.md
 .worktrees/

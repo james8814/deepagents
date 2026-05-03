@@ -94,6 +94,51 @@
 
   **元层观察（2026-05-04，非 checklist 强制项）**：CTO 第 5 次"失误"（"pmagent 主导 quality first 文化"评价偏移）由 pmagent 技术总监校正。这次校正提示 quality first 文化是**三方相互校正的产物**（CTO 失误催生 ADR / pmagent 实证翻盘 / 项目负责人挑战触发器，三者循环），不是任何单方主导。本观察价值在评价语言准则，但**不作为强制 checklist 项**（评价语言准则不是 reproducible 失误模式，与 #16-#22 性质不同）。
 
+  **ADR 评审 checklist v5 增补 #23（2026-05-04 沉淀）**：
+
+  **触发**: CTO 自 audit §3.2 共同模式洞察 + 三方专家 v1.6 review 接受 — D2-A1 / fork-diff-A1 / H3-A1 三个 CTO findings 共同根因是「设计文档倾向给"what"，不给"how to verify"」，是 #22 在设计 spec 维度的扩展。
+
+  **#23**: ✅ **设计文档（spec / SOP / 装配支援包 / 决策记录）必须含 verification 章节 — 不仅描述 what to do，还描述 how to verify done correctly**
+
+  完整定义：
+
+  ```text
+  任何设计文档（含但不限于 ADR / spec / SOP / 装配支援包 / 测试 spec）
+  必须配 verification 章节，明示：
+
+  1. 实施完成的客观判定标准（不能"主观判断 OK"）
+  2. 验证方法（含对照实验设计如适用 — 应用 #22）
+  3. 失败时的可观察信号（log / metric / test failure）
+  4. 谁负责跑 verification（角色 + 时机）
+
+  实证反例（CTO audit 3 findings）:
+  - D-2 v2 §6 R-3 单元测试 spec 未明示对照测试要求
+    → 实施时无 spec-level guidance，pmagent 可能漏覆盖嵌套 SubAgent / async-sync 双路径
+  - fork diff 评估 §4.2 步骤 2 "评估每项 fork feature 业务必要性"
+    → "是否仍依赖某 feature" 缺可执行评估方法（缺测试驱动判定）
+  - H-3 §3.2 测试断言示例未明示"每项不变量必须配反向测试"
+    → 导致 pmagent T-1~T-13 实施时仅 T-3 做反向（12 项漏检风险）
+
+  正向示范（pmagent 接受副本本身）:
+  - §3.4 纪律 4 invariant 测试持续守护：含具体测试文件 + 跑法 + Quality first 验收 (T-3 反向验证)
+  - ADR-0002 §6.2 4 治理纪律：每项含"如何执行" + "失败信号"
+  ```
+
+  **#23 与 #16-#22 的关系**：
+
+  - #16-#19 防御 fact-check 缺失（数据维度）
+  - #20-#21 防御角色权限 / governance 摩擦
+  - #22 防御实验设计 design flaw（实验维度）
+  - **#23 防御文档设计 design flaw（spec 维度）— 是 #22 在设计 spec 上的扩展**
+
+  **应用 SOP**：
+
+  - 任何新 ADR / spec / SOP / 装配支援包 草稿时必须含 verification 章节
+  - 已有文档 audit 时检查 verification 章节是否完整
+  - 三方 review 默认 checklist 加 "verification 章节是否齐备"
+
+  **沉淀根因**: pmagent v1.6 三方专家二次 review APPROVE + CTO 自 audit 3 findings 共同模式洞察。pmagent 接受副本 commit b246404 (2026-05-04) 已落地；deepagents 主档案本次 sync 完成（应用 CTO 第 8 次失误教训：sync 必须 git commit + push 实证，不能依赖记忆）。
+
 ---
 
 ## 1. 决策摘要（待批准）
