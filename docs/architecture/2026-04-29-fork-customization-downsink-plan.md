@@ -1,4 +1,15 @@
-# Fork 定制下沉方案 — 让 deepagents fork 与上游实时同步
+> ⚠️ **HISTORICAL 2026-05-02** — 本文档（v1 / 最早 Plan B 探索版）**已被 Plan H+ 取代**。
+>
+> v1 推荐 Plan B（引入 deepagents_ext/ namespace）。被否决后演进至 v2-v3（Plan D）→ v4-rev2（Plan E++）→ Plan H → **Plan H+（终局）**。
+>
+> **当前权威方案**：[`2026-05-02-plan-h-plus-final.md`](2026-05-02-plan-h-plus-final.md)
+> **决策档案**：[`decisions/0002-fork-customization-strategy.md`](decisions/0002-fork-customization-strategy.md)
+>
+> 本文档保留为**最早期决策档案**，记录 Plan B 否决的实证基础（pmagent 实际是 fork 消费者，不是平行实现者）。
+
+---
+
+# Fork 定制下沉方案 — 让 deepagents fork 与上游实时同步（HISTORICAL — 已被 Plan H+ 取代）
 
 **日期**: 2026-04-29
 **作者**: 架构师团队
