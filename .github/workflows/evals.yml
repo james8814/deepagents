@@ -314,7 +314,7 @@ jobs:
   # as separate jobs whose matrices come from `prep`'s per-provider outputs;
   # see _EVAL_PROVIDER_OUTPUTS in .github/scripts/models.py for the source set.
   eval-anthropic:
-    name: "📊 Eval Anthropic (${{ matrix.model }})"
+    name: "📊 Anthropic · ${{ matrix.model }} · ${{ inputs.eval_categories_override || inputs.eval_categories || 'all categories' }} · ${{ inputs.eval_tiers_override || inputs.eval_tiers || 'all tiers' }}"
     needs: prep
     if: ${{ needs.prep.outputs.anthropic_has_models == 'true' }}
     strategy:
@@ -335,7 +335,7 @@ jobs:
     secrets: inherit
 
   eval-baseten:
-    name: "📊 Eval Baseten (${{ matrix.model }})"
+    name: "📊 Baseten · ${{ matrix.model }} · ${{ inputs.eval_categories_override || inputs.eval_categories || 'all categories' }} · ${{ inputs.eval_tiers_override || inputs.eval_tiers || 'all tiers' }}"
     needs: prep
     if: ${{ needs.prep.outputs.baseten_has_models == 'true' }}
     strategy:
@@ -356,7 +356,7 @@ jobs:
     secrets: inherit
 
   eval-fireworks:
-    name: "📊 Eval Fireworks (${{ matrix.model }})"
+    name: "📊 Fireworks · ${{ matrix.model }} · ${{ inputs.eval_categories_override || inputs.eval_categories || 'all categories' }} · ${{ inputs.eval_tiers_override || inputs.eval_tiers || 'all tiers' }}"
     needs: prep
     if: ${{ needs.prep.outputs.fireworks_has_models == 'true' }}
     strategy:
@@ -377,7 +377,7 @@ jobs:
     secrets: inherit
 
   eval-google-genai:
-    name: "📊 Eval Google GenAI (${{ matrix.model }})"
+    name: "📊 Google GenAI · ${{ matrix.model }} · ${{ inputs.eval_categories_override || inputs.eval_categories || 'all categories' }} · ${{ inputs.eval_tiers_override || inputs.eval_tiers || 'all tiers' }}"
     needs: prep
     if: ${{ needs.prep.outputs.google_genai_has_models == 'true' }}
     strategy:
@@ -398,7 +398,7 @@ jobs:
     secrets: inherit
 
   eval-groq:
-    name: "📊 Eval Groq (${{ matrix.model }})"
+    name: "📊 Groq · ${{ matrix.model }} · ${{ inputs.eval_categories_override || inputs.eval_categories || 'all categories' }} · ${{ inputs.eval_tiers_override || inputs.eval_tiers || 'all tiers' }}"
     needs: prep
     if: ${{ needs.prep.outputs.groq_has_models == 'true' }}
     strategy:
@@ -419,7 +419,7 @@ jobs:
     secrets: inherit
 
   eval-nvidia:
-    name: "📊 Eval NVIDIA (${{ matrix.model }})"
+    name: "📊 NVIDIA · ${{ matrix.model }} · ${{ inputs.eval_categories_override || inputs.eval_categories || 'all categories' }} · ${{ inputs.eval_tiers_override || inputs.eval_tiers || 'all tiers' }}"
     needs: prep
     if: ${{ needs.prep.outputs.nvidia_has_models == 'true' }}
     strategy:
@@ -440,7 +440,7 @@ jobs:
     secrets: inherit
 
   eval-ollama:
-    name: "📊 Eval Ollama (${{ matrix.model }})"
+    name: "📊 Ollama · ${{ matrix.model }} · ${{ inputs.eval_categories_override || inputs.eval_categories || 'all categories' }} · ${{ inputs.eval_tiers_override || inputs.eval_tiers || 'all tiers' }}"
     needs: prep
     if: ${{ needs.prep.outputs.ollama_has_models == 'true' }}
     strategy:
@@ -461,7 +461,7 @@ jobs:
     secrets: inherit
 
   eval-openai:
-    name: "📊 Eval OpenAI (${{ matrix.model }})"
+    name: "📊 OpenAI · ${{ matrix.model }} · ${{ inputs.eval_categories_override || inputs.eval_categories || 'all categories' }} · ${{ inputs.eval_tiers_override || inputs.eval_tiers || 'all tiers' }}"
     needs: prep
     if: ${{ needs.prep.outputs.openai_has_models == 'true' }}
     strategy:
@@ -482,7 +482,7 @@ jobs:
     secrets: inherit
 
   eval-openrouter:
-    name: "📊 Eval OpenRouter (${{ matrix.model }})"
+    name: "📊 OpenRouter · ${{ matrix.model }} · ${{ inputs.eval_categories_override || inputs.eval_categories || 'all categories' }} · ${{ inputs.eval_tiers_override || inputs.eval_tiers || 'all tiers' }}"
     needs: prep
     if: ${{ needs.prep.outputs.openrouter_has_models == 'true' }}
     strategy:
@@ -503,7 +503,7 @@ jobs:
     secrets: inherit
 
   eval-xai:
-    name: "📊 Eval xAI (${{ matrix.model }})"
+    name: "📊 xAI · ${{ matrix.model }} · ${{ inputs.eval_categories_override || inputs.eval_categories || 'all categories' }} · ${{ inputs.eval_tiers_override || inputs.eval_tiers || 'all tiers' }}"
     needs: prep
     if: ${{ needs.prep.outputs.xai_has_models == 'true' }}
     strategy:
@@ -524,7 +524,7 @@ jobs:
     secrets: inherit
 
   eval-other:
-    name: "📊 Eval Other (${{ matrix.model }})"
+    name: "📊 Other · ${{ matrix.model }} · ${{ inputs.eval_categories_override || inputs.eval_categories || 'all categories' }} · ${{ inputs.eval_tiers_override || inputs.eval_tiers || 'all tiers' }}"
     needs: prep
     if: ${{ needs.prep.outputs.other_has_models == 'true' }}
     strategy:
