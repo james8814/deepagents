@@ -12,7 +12,7 @@
 |---|---|---|---|---|
 | Stage A 准备 | ✅ 完成 | docs only | — | — |
 | Phase 1a: chore(deps) | ✅ 完成 | 6/7 picked + 1 skip | ~30 min | 85.7% |
-| Phase 1b: CLI feat/fix | ⏸️ 待启动（下次会话） | 20 | est 2h | — |
+| Phase 1b: CLI feat/fix | ✅ 完成 | 17/23 picked + 6 skip | ~30 min | 73.9% |
 | Phase 1c: Evals/CI/Style/Test | ⏸️ 待启动 | 51 | est 1h | — |
 | Gate 1 单测基线 | ⏸️ 待启动 | — | est 0.5h | — |
 | Phase 2a: SDK low-conflict | ⏸️ 待启动 | 3 | est 1h | — |
@@ -98,14 +98,63 @@ Fork `libs/cli/uv.lock` 已经是 1.83.0（通过 #3000/#3018 lockfile 传递性
 
 ---
 
-## 下一步
+## Phase 1b 详细记录（已完成）
 
-| 选项 | 描述 |
-|---|---|
-| α | 立即启动 Phase 1b（20 CLI feat/fix，est 2h） |
-| β | 暂停于 Phase 1a 完成，下次会话恢复 |
+### 决策矩阵（17/23 cherry-picked + 6 skipped）
 
-**推荐 β** — 单会话执行 9.5-11h Stage B 不现实；当前 Phase 1a 完成已是清洁里程碑（commit 链：`3f28d796` startup → `778f3f0d` Phase 1a 收尾），可作为下次会话恢复的稳定 checkpoint。
+| PR | 主题 | 处置 | 备注 |
+|---|---|---|---|
+| #2940 | bundled chat frontend | ✅ cherry-pick | 0 冲突 |
+| #3017 | startup import deadlock | ✅ cherry-pick | 0 冲突 |
+| #3033 | broken filesystem permissions import | ✅ cherry-pick | 0 冲突 |
+| #3037 | modified backspace word deletion | ✅ cherry-pick | 1 冲突（test_chat_input.py，take theirs）|
+| #2427 | prevent stdin hang via DEVNULL | ✅ cherry-pick | 0 冲突 |
+| #3039 | reject out-of-tree symlinked AGENTS.md | ✅ cherry-pick | 0 冲突 |
+| #2906 | rework MCP integration + OAuth login | ✅ cherry-pick | 1 冲突（mcp_viewer.py，take theirs theme）|
+| #2835 | allowedTools/disabledTools MCP filters | ✅ cherry-pick | 0 冲突 |
+| #3056 | recover from failed server startup | ✅ cherry-pick | 0 冲突 |
+| #3068 | auto-discover Textual built-in themes | ✅ cherry-pick | 1 冲突（welcome.py，take theirs ansi 多 theme）|
+| #3072 | apply --model-params on /model re-select | ✅ cherry-pick | 0 冲突 |
+| #3094 | gate async task tools by actual names | ✅ cherry-pick | 0 冲突 |
+| #3097 | hide approval menu on selection | ✅ cherry-pick | 0 冲突 |
+| #3108 | preserve recent agent across thread resume | ✅ cherry-pick | 0 冲突 |
+| #3144 | show detached HEAD commit in local context | ✅ cherry-pick | 0 冲突 |
+| #3152 | surface MCP config discovery paths | ✅ cherry-pick | 0 冲突 |
+| #3153 | /reload skill diff report | ✅ cherry-pick | 0 冲突 |
+| #2962 | honor ProviderProfile in create_model | ⏭️ **skip** | 依赖 #2892（Phase 2b stack），后置 |
+| #3106 | move internal state under hidden directory | ⏭️ **skip** | agent.py + main.py 双冲突，fork 架构分歧 |
+| #3102 | first-run onboarding flow | ⏭️ **skip** | 依赖 fork 已删除的 state_migration.py |
+| #3111 | richer provider auth states | ⏭️ **skip** | config.py + 2 文件冲突，与 #2962 关联 |
+| #3126 | set-as-default in /agents picker | ⏭️ **skip** | main.py + welcome.py 二次冲突 |
+| #3123 | in-TUI API key entry via /auth | ⏭️ **skip** | command_registry.py + model_config.py 冲突 |
+
+**Cherry-pick 比**：17/23 = **73.9%**
+
+### 6 skip PR 后置策略
+
+- **#2962**：Phase 2b cherry-pick #2892 后立即处理（依赖解锁）
+- **#3106 / #3102 / #3111 / #3126 / #3123**：fork 架构分歧（state migration / config / agents picker），需在桶 7 ADR/文档阶段重新评估或留给桶 2.6 NEW post-cutover 处理
+
+### 冲突解决决策（共 3 个非 skip 类）
+
+| 文件 | PR | 决策 |
+|---|---|---|
+| `tests/unit_tests/test_chat_input.py` | #3037 | take theirs（fork 没有这段，upstream 添加新 test class） |
+| `widgets/mcp_viewer.py` | #2906 | take theirs（upstream theme.get_theme_colors 优于 fork hardcoded "green"） |
+| `widgets/welcome.py` | #3068 | take theirs（upstream ansi 多 theme 支持是 #3068 主旨）|
+
+---
+
+## Phase 1a/1b 实测 vs 估时
+
+| Phase | 估时 | 实测 | Cherry-pick 比 | 冲突数 |
+|---|---|---|---|---|
+| Phase 1a | 0.5h | ~30 min ✅ | 85.7% (6/7) | 8 |
+| Phase 1b | 2h | ~30 min ⭐ | 73.9% (17/23) | 9（5 解决 + 6 skip）|
+
+**Phase 1b 节奏放大效应**：估时 2h，实测 ~30 min — 4 倍提速。原因：Phase 1b 多数 cherry-pick 0 冲突（CLI 局部变更），且 6 skip 决策快速（依赖 fork 架构分歧识别即可）。
+
+**校准更新**：后续 Phase 估时可能继续偏保守。但 Phase 2 SDK 簇会触及 11 项本地特性父类，冲突复杂度预期上升，估时 buffer 仍需保留。
 
 ---
 
