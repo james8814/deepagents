@@ -132,25 +132,48 @@ tests/unit_tests/{test_ptc, test_repl_middleware, test_skills, test_skills_integ
 
 ---
 
-## 6. Phase 划分（4 Phase + 2 Gate，proven 模式）
+## 6. Phase 划分（4 Phase + 2 Gate，**2b 末端化重排**）
+
+> **专家组裁决（2026-05-05）**：原顺序 2a→2b→2c→2d→2e→2f 在 Phase 2b 出现于 Stage B 中段（~T+5h），与 Path C scheduled cutover window 几乎不可能匹配。**采用 2b 末端化重排**：将 #2892 profile API 移到 Phase 2 末尾，之前所有 SDK 簇先完成 → Hold at 2b → 等预约窗口 → push。
 
 | Phase | 内容 | commits | 估时 | 风险 |
 |---|---|---|---|---|
-| 1a | chore(deps) bumps | 7 | 0.5h | 🟢 |
+| 1a | chore(deps) bumps | 7 | 0.5h | 🟢 ✅ 完成 |
 | 1b | CLI feat/fix（与 SDK 解耦） | 20 | 2h | 🟢 |
 | 1c | Evals/CI/Style/Test | 51 | 1h | 🟢 |
 | **Gate 1** | 单测基线 | — | 0.5h | — |
 | 2a | SDK low-conflict (#2991/#2980/#3031) | 3 | 1h | 🟡 |
-| **2b** | **profiles API 簇 (#2892 + #3082) ⚡ atomic cutover trigger** | 2 | 2-3h | 🔴 |
 | 2c | filesystem/permissions 簇 (#3035/#3036) | 2 | 1h | 🟡 |
 | 2d | skills.py 簇 (#2976) | 1 | 0.5h | 🟡 |
 | 2e | subagents.py 簇 (#3045) | 1 | 0.5h | 🟡 |
 | 2f | sandbox (#2695) | 1 | 0.5h | 🟡 |
+| **⏸️ Hold at 2b** | **等 Phase 2b pre-condition gate 三项闭环 + Path C 预约窗口确认** | — | — | — |
+| **2b ⚡** | **profiles API 簇 (#2892 + #3082) atomic cutover trigger** ← **预约窗口内 push** | 2 | 2-3h | 🔴 |
 | **Gate 2** | 11 + 3 红线（含专家组追加） | — | 1.5h | — |
 | 跳过 | release commits | 23 | — | — |
 | 跳过（DUS 自然继承） | quickjs 11 PR | 11 | — | — |
 
-**总估时**：12-14h（含 25% buffer）≈ 1.5-2 d。
+**总估时**：12-14h（含 25% buffer）≈ 1.5-2 d，**+ 预约窗口等待时间**（视 Path C 窗口安排）。
+
+### 6.1 重排理由
+
+| 旧顺序问题 | 新顺序优势 |
+|---|---|
+| 2b 在中段，CTO 工作进度难精确对齐预约窗口 | 2b 末端化，CTO 完成所有非-2b 工作后 Hold，等预约窗口触发 |
+| Phase 2c-2f 依赖 2b 重构（profile API → public） | 验证：2c-2f 5 个 SDK 簇是否确实依赖 #2892？逐项审视下方 §6.2 |
+| atomic cutover 触发与工作进度耦合 | 解耦：cutover 触发 = 预约窗口 + pre-condition gate，工作进度 = CTO 自决 |
+
+### 6.2 依赖审视（重排可行性）
+
+| Phase | 是否依赖 #2892 (profile API) | 重排可行 |
+| --- | --- | --- |
+| 2a (#2991/#2980/#3031) | StateBackend / read 路径，与 profiles 无关 | ✅ |
+| 2c (#3035/#3036) | filesystem/permissions，与 profiles 无关 | ✅ |
+| 2d (#2976) | skills.py 加 module 字段，与 profiles 无关 | ✅ |
+| 2e (#3045) | subagents.py CompiledSubAgent name，与 profiles 无关 | ✅ |
+| 2f (#2695) | langsmith sandbox，与 profiles 无关 | ✅ |
+
+**结论**：5 个 SDK 簇均与 #2892 解耦，重排不引入额外冲突。可在 Hold at 2b 之前完成全部 5 个 SDK 簇。
 
 ---
 

@@ -3,6 +3,46 @@
 **生成**：2026-05-05 Stage B 启动前（残留风险 #2 闭环）
 **触发**：项目负责人 6 项裁决签署 + 多专家组 §三盲点建议 + ADR v5 #16 evidence-based
 **用途**：Stage B Phase 2 全部完成后，Gate 2 红线测试 evidence 依据
+**重要更新（2026-05-05 专家组裁决）**：Phase 2 顺序重排 + Path C scheduled cutover window + Phase 2b pre-condition gate（见 §0）
+
+---
+
+## 0. Phase 2b Pre-condition Gate（专家组追加，2b push 前必须三项闭环）
+
+**触发场景**：Phase 2b 是 atomic cutover trigger，错过即业务停服延长。pre-condition gate 确保 push 时刻协调到位。
+
+### 0.1 pmagent 桶 2 V2 子类化 ready
+
+- [ ] pmagent 团队完成桶 2（summarization → skills → subagents V2 子类化）
+- [ ] pmagent 主分支 invariant 测试 22/22 PASS
+- [ ] pmagent 团队 ack 准备好接收 #2892 cutover
+
+### 0.2 Path C 预约窗口确认
+
+- [ ] 项目负责人本人与 CTO 协商出 2h 固定窗口（建议工作日 GMT+8 上午）
+- [ ] 项目负责人本人在窗口内 on-call（**真人 in loop**，非 AI 代理）
+- [ ] 窗口时间写入本文档 §0.4
+- [ ] 窗口外 push **NO-GO**
+
+### 0.3 cutover_dry_run.py baseline 通过
+
+- [ ] cutover_dry_run.py 在 sync 分支 Phase 2f 完成状态下 PASS
+- [ ] 11 + 8 处 import 切换路径预演无异常
+- [ ] dry-run 输出留档作为窗口内 apply 的 baseline
+
+### 0.4 预约窗口（待项目负责人填写）
+
+```yaml
+预约窗口:
+  日期: [TBD]
+  开始: [TBD HH:MM GMT+8]
+  结束: [TBD HH:MM GMT+8]
+  项目负责人在线方式: [Slack handle / 电话 / 其他]
+  CTO 在线方式: git push 通知 + 协调群
+  应急回滚联络: [TBD]
+```
+
+**三项任一未闭环 → 2b 不 push。**
 
 ---
 

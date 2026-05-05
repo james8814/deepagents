@@ -6,21 +6,27 @@
 
 ---
 
-## 总体进度
+## 总体进度（**2b 末端化重排** — 专家组 2026-05-05 裁决）
 
 | Phase | 状态 | commits | 实测耗时 | cherry-pick 比 |
 |---|---|---|---|---|
 | Stage A 准备 | ✅ 完成 | docs only | — | — |
 | Phase 1a: chore(deps) | ✅ 完成 | 6/7 picked + 1 skip | ~30 min | 85.7% |
-| Phase 1b: CLI feat/fix | ⏸️ 待启动 | 20 | est 2h | — |
+| Phase 1b: CLI feat/fix | ⏸️ 待启动（下次会话） | 20 | est 2h | — |
 | Phase 1c: Evals/CI/Style/Test | ⏸️ 待启动 | 51 | est 1h | — |
 | Gate 1 单测基线 | ⏸️ 待启动 | — | est 0.5h | — |
 | Phase 2a: SDK low-conflict | ⏸️ 待启动 | 3 | est 1h | — |
-| **Phase 2b: profiles API ⚡ trigger** | ⏸️ 待启动 | 2 | est 2-3h | — |
-| Phase 2c-2f: SDK 簇 | ⏸️ 待启动 | 5 | est 3h | — |
+| Phase 2c: filesystem/permissions | ⏸️ 待启动 | 2 | est 1h | — |
+| Phase 2d: skills.py | ⏸️ 待启动 | 1 | est 0.5h | — |
+| Phase 2e: subagents.py | ⏸️ 待启动 | 1 | est 0.5h | — |
+| Phase 2f: sandbox | ⏸️ 待启动 | 1 | est 0.5h | — |
+| **⏸️ Hold at 2b** | **等 pre-condition gate 三项 + Path C 预约窗口** | — | — | — |
+| **Phase 2b ⚡: profiles API trigger** | **预约窗口内 push** | 2 | est 2-3h | — |
 | Gate 2 红线 | ⏸️ 待启动 | — | est 1.5h | — |
 | 跳过 release | — | 23 | — | — |
 | 跳过 quickjs (DUS 自然继承) | — | 11 | — | — |
+
+**重排理由**：原 2b 中段位置与 Path C scheduled cutover window 几乎不可能匹配。2b 末端化让 CTO 完成所有非-2b 工作后 Hold，等预约窗口触发 push。详见 ROUND16_RISK_ASSESSMENT.md §6.1/§6.2 依赖审视。
 
 ---
 
