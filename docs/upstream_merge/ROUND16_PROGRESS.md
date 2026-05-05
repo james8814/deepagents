@@ -20,8 +20,9 @@
 | Phase 2d: skills.py | ⏸️ 待启动 | 1 | est 0.5h | — |
 | Phase 2e: subagents.py | ⏸️ 待启动 | 1 | est 0.5h | — |
 | Phase 2f: sandbox | ⏸️ 待启动 | 1 | est 0.5h | — |
-| **⏸️ Hold at 2b** | **等 pre-condition gate 三项 + Path C 预约窗口** | — | — | — |
-| **Phase 2b ⚡: profiles API trigger** | **预约窗口内 push** | 2 | est 2-3h | — |
+| **Gate 1.5 (committee audit)** | ⏸️ 待启动（指令 \[4\]，技术性 audit） | — | est 1h | — |
+| **⏸️ Hold at 2b** | **等 Gate 1.5 PASS + Phase 2b 三重前置（pmagent 桶 2 / Path C 窗口 / dry-run baseline）** | — | — | — |
+| **Phase 2b ⚡: profiles API trigger** | **预约窗口内 push（指令 \[5\] 三重前置全闭环后）** | 2 | est 2-3h | — |
 | Gate 2 红线 | ⏸️ 待启动 | — | est 1.5h | — |
 | 跳过 release | — | 23 | — | — |
 | 跳过 quickjs (DUS 自然继承) | — | 11 | — | — |

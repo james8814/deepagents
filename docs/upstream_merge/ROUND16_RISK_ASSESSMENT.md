@@ -142,12 +142,13 @@ tests/unit_tests/{test_ptc, test_repl_middleware, test_skills, test_skills_integ
 | 1b | CLI feat/fix（与 SDK 解耦） | 20 | 2h | 🟢 |
 | 1c | Evals/CI/Style/Test | 51 | 1h | 🟢 |
 | **Gate 1** | 单测基线 | — | 0.5h | — |
-| 2a | SDK low-conflict (#2991/#2980/#3031) | 3 | 1h | 🟡 |
-| 2c | filesystem/permissions 簇 (#3035/#3036) | 2 | 1h | 🟡 |
-| 2d | skills.py 簇 (#2976) | 1 | 0.5h | 🟡 |
+| 2a | SDK low-conflict (#2991/#2980/#3031) | 3 | 1h | 🟡 ⚠️ filesystem.py |
+| 2c | filesystem/permissions 簇 (#3035/#3036) | 2 | 1h | 🟡 ⚠️ filesystem.py |
+| 2d | skills.py 簇 (#2976) | 1 | 0.5h | 🟡 ⚠️ empty commit 预案 |
 | 2e | subagents.py 簇 (#3045) | 1 | 0.5h | 🟡 |
 | 2f | sandbox (#2695) | 1 | 0.5h | 🟡 |
-| **⏸️ Hold at 2b** | **等 Phase 2b pre-condition gate 三项闭环 + Path C 预约窗口确认** | — | — | — |
+| **Gate 1.5** | 委员会 audit（指令 \[4\]：11 项保护 + read-your-writes + permission re-export） | — | 1h | — |
+| **⏸️ Hold at 2b** | **等 Gate 1.5 PASS + Phase 2b 三重前置（指令 \[5\]） + Path C 预约窗口确认** | — | — | — |
 | **2b ⚡** | **profiles API 簇 (#2892 + #3082) atomic cutover trigger** ← **预约窗口内 push** | 2 | 2-3h | 🔴 |
 | **Gate 2** | 11 + 3 红线（含专家组追加） | — | 1.5h | — |
 | 跳过 | release commits | 23 | — | — |
@@ -174,6 +175,31 @@ tests/unit_tests/{test_ptc, test_repl_middleware, test_skills, test_skills_integ
 | 2f (#2695) | langsmith sandbox，与 profiles 无关 | ✅ |
 
 **结论**：5 个 SDK 簇均与 #2892 解耦，重排不引入额外冲突。可在 Hold at 2b 之前完成全部 5 个 SDK 簇。
+
+### 6.3 跨 Phase filesystem.py 修改 flag（深度审计 A4）
+
+**事实**：Phase 2a 与 Phase 2c 都涉及 `libs/deepagents/deepagents/backends/filesystem.py`：
+
+| Phase | PR | 改动行段 | 主题 |
+| --- | --- | --- | --- |
+| 2a | #3031 | line 13（imports）+ line 375（write 路径） | EOF-newline mismatch in edit_file |
+| 2c | #3035 | line 1（imports）+ line 168/180（resolve 路径） | symlink 防御 (ELOOP) |
+
+**风险评级**：🟡 中——两 PR 改不同行段，cherry-pick 顺序 2a → 2c **预期 auto-merge**。
+
+**监控点**：
+
+- Phase 2c cherry-pick #3035 时若出现 `filesystem.py` conflict → 说明 #3031 与 #3035 行段重叠（与本审计预测不符），需手动 review
+- Gate 1 单测必须含 `tests/unit_tests/backends/test_filesystem_backend.py` 全套，验证 #3031 与 #3035 综合行为正确
+
+### 6.4 #2976 empty commit 预案（深度审计 A5）
+
+**事实**：`git diff 2a9cd44f^ 2a9cd44f --stat` 返回空，commit object 存在但无文件 diff（git 异常或 squash merge 副作用）。
+
+**预案**：
+
+- Phase 2d cherry-pick 出现"all conflicts fixed"无内容时，按 #2451 同模式 `git cherry-pick --skip`
+- skip 决策记录到 ROUND16_PROGRESS.md Phase 2d 行
 
 ---
 
