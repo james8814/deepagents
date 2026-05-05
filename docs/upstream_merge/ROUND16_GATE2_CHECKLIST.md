@@ -87,6 +87,32 @@
 
 ---
 
+## 0''. 桶 2.5 启动前置 — V2 父类 init Compatibility Gate（项目负责人 ULTRATHINK §4.2 增补）
+
+**触发场景**：pmagent 桶 2.2/2.3/2.4 V2 子类完成时 pin 到 fork-state-A，CTO Phase 2d/2e 修改 `skills.py` / `subagents.py` 父类后 fork-state 漂移到 B → V2 init 镜像可能与 state-B 父类不一致。**风险等级 🟢 低（PR #2976 / #3045 都是加性修改），但不可假设**。
+
+**实施时机**（三次检查）：
+
+1. pmagent 桶 2.4 完成后立即跑（fork drift snapshot）
+2. CTO Phase 2d / 2e 完成后立即重跑（catch any drift）
+3. 桶 2.5 启动前最后一次跑（确认 baseline）
+
+**5 项检查清单**（pmagent 责任，CTO 通过协调通知知悉）：
+
+- [ ] pmagent 桶 2.2 V2 vs 当前 fork master `summarization.py` — init compatible
+- [ ] pmagent 桶 2.3 V2 vs 当前 fork master `skills.py` — init compatible
+- [ ] pmagent 桶 2.4 V2 vs 当前 fork master `subagents.py` — init compatible
+- [ ] `ROUND16_FORK_DRIFT_LOG.md`（pmagent 仓库）三组 since-T-0 commits 列举 + 影响判定
+- [ ] 任一 incompatible → 立即停止桶 2.5 → pmagent rebase V2 → 重跑 invariants → 项目负责人 sign-off → 才启动桶 2.5
+
+**CTO 协调义务**：
+
+- Phase 2d 完成后 → push 同时通知 pmagent 重跑此 Gate
+- Phase 2e 完成后 → push 同时通知 pmagent 重跑此 Gate
+- 通知格式：commit hash + `git diff --stat` + key signature changes（参考 Phase 2b cutover SLA 模板）
+
+---
+
 ## 1. 11 项本地优越特性保护断言（核心红线）
 
 每项需验证：(a) 文件存在 (b) 关键函数/类签名不变 (c) 行为单测 PASS。

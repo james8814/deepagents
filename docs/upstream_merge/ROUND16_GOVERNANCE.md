@@ -223,7 +223,45 @@ T-30min (2026-05-13 周三 09:30 GMT+8) │ Window-ready
 
 - ⏸️ **Stand by** — 等下次会话项目负责人启动 Phase 1b 指令
 - **不主动启动**：Phase 1b/1c/2 任何后续 cherry-pick 工作（governance 边界严守）
-- **不擅自 reset**：c99f9fd7 + 后续所有 commits 保留（指令 \[7\] 禁止破坏性操作）
+- **不擅自 reset**：`c99f9fd7` + 后续所有 commits 保留（指令 \[7\] 禁止破坏性操作）
+
+**Phase 1b Pre-Clearance（项目负责人 2026-05-05 PM 预授权）**：项目负责人已书面 pre-authorize Phase 1b 启动。下次会话 CTO 完成 §8 SOP 后**可直接启动 Phase 1b，不需再请示**。
+
+---
+
+## 8. 下次会话恢复 SOP（项目负责人 §5 Pre-Clearance）
+
+```text
+T+0     CTO inline 提供 5 项 AMBER 修复内容
+        - 内容 (本会话已 inline 交付，下次会话重申以确保审计链 CRYSTAL clear)
+        - 触发来源 + 是否影响 Phase 1a + 为何独立 commit
+T+1min  pmagent 桶 2.4 进度同步 (如有 L1 报告则一并提交)
+T+2min  项目负责人确认 AMBER 透明化 + 桶 2.4 状态
+T+3min  CTO 启动 Phase 1b (20 CLI feat/fix, 估时 2-2.5h + buffer)
+```
+
+**Phase 1b 启动条件 4/4**：
+
+- [x] Phase 1a 完成（`4e8be37f`）
+- [x] Governance 落档（`53c551b9`）
+- [x] 项目负责人授权（本节 §7 末段 pre-clearance + §8 SOP）
+- [ ] AMBER 透明化（next session T+0 inline）
+
+**双轨并行声明**：CTO 不需等 pmagent 桶 2.4 完成才启动 Phase 1b。CTO Phase 2d/2e 与 pmagent 桶 2.4 间的协调由 §0'' 桶 2.5 启动前置 V2 父类 init compatibility Gate 处理（详见 ROUND16_GATE2_CHECKLIST.md §0''）。
+
+---
+
+## 9. 三层 Production Scope 防线（项目负责人 §2 共识落档）
+
+CTO 4 项 production scope 自检与项目负责人 §0 立规 100% 对齐，形成三层防线：
+
+| Layer | 责任方 | 内容 |
+|---|---|---|
+| L1 | pmagent | L1 报告含 production callsite 追溯（不仅 builders.py，含 fallback 路径） |
+| L2 | 委员会 audit（Gate 1.5） | 验证 production middleware stack 已切 V2 + cutover-state 模拟测试 |
+| L3 | CTO Phase 2b push 前 | 4 项 last-mile 自检（见 §3.1） |
+
+**任一层失败 → push 阻断**。三层独立验证形成步步为营框架的实质性强化。
 
 ---
 
