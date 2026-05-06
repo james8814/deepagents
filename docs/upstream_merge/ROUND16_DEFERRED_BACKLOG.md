@@ -145,7 +145,31 @@ Phase 1c (实际 ~50 PR Evals/CI/Style/Test) 完成（41/~50 = ~82%）+ 9 个 sk
 
 **CTO 决策**：Option b（fork-side patch in Gate 1 阶段）+ Option c（备选保障）。
 
-### 6.2 立规 §2.4 Comparative-driven 触发记录
+### 6.3 A16 RED — SDK test_models.py ImportError (Gate 1 baseline)
+
+**触发**：Network 恢复事件 → Layer 1 Gate 1 完整单测基线（2026-05-06 EOD continued）。
+
+**5 维度（立规 §2.4 v2）**：
+
+1. **发现内容**：`tests/unit_tests/test_models.py:19` import `GeneralPurposeSubagentProfile from deepagents.profiles` 失败。fork 在 Phase 2b #2892 profile API 重构前**不含此 class**，但 Phase 1c #3071 `test(sdk): silence expected UserWarnings` take theirs 引入 upstream 测试期望。
+2. **修复方式**：Gate 1 baseline 时 `--ignore=tests/unit_tests/test_models.py`（17 个测试 skipped）。**Phase 2b cherry-pick #2892 后此 class 自动在 fork 中可用，A16 自动恢复**。无需 fork-side patch。
+3. **来源轨道**：Track A Forward-driven（Gate 1 baseline 实跑发现）。
+4. **审计可追溯**：error trace `ImportError: cannot import name 'GeneralPurposeSubagentProfile' from 'deepagents.profiles'`。落档于本文件 + Phase 2b 后置 Group A 处理时一并 unskip。
+5. **严重度判定**：🔴 RED → Phase 2b 后自动恢复（无 fork patch 需要）。Gate 1.5 audit 时此 17 个 test 仍 skip，Gate 1.5 audit report 需 inline `--ignore` 决策（按 §5A multi-source method consistency）。
+
+### 6.4 A17 AMBER — CLI test_input_parsing.py 8 errors + 1 fail (Gate 1 baseline)
+
+**触发**：同 A16，Gate 1 baseline 实测。
+
+**5 维度**：
+
+1. **发现内容**：CLI `tests/unit_tests/test_input_parsing.py` 含 8 errors（`test_parse_file_mentions_*`）+ 1 fail（其他 module）。Total 3835 PASS / 1 FAIL / 8 errors / 3 SKIP（vs Round 14 baseline 3065 PASS + Phase 1b/1c 引入 ~770 新测试）。
+2. **修复方式**：Gate 1.5 阶段深入分析 8 errors 根因（fixture 问题 / env 依赖 / 二次 take theirs 副作用）+ 1 fail 定位。
+3. **来源轨道**：Track A Forward-driven（Gate 1 baseline 实跑发现）。
+4. **审计可追溯**：pytest output `8 errors in test_input_parsing.py: test_parse_file_mentions_warns_for_nonexistent_file / ignores_directories / adjacent_looks_like_email / handles_oserror / skips_email_addresses / skips_various_email_formats / works_after_cjk_text / handles_bad_tilde_user`。
+5. **严重度判定**：🟡 AMBER（8 errors / 3835 PASS = 0.2% fail rate；不影响 Phase 2 推进，但 Gate 1.5 audit 必须解决）。
+
+### 6.5 立规 §2.4 Comparative-driven 触发记录
 
 A15 是立规 §2.4（自 2026-05-06 项目负责人裁决生效）的**首次触发实证**：
 

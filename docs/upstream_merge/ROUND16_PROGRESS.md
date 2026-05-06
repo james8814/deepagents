@@ -15,6 +15,7 @@
 | Phase 1b: CLI feat/fix | ✅ 完成 | 17/23 picked + 6 skip | ~30 min | 73.9% |
 | Gate 1.0 smoke test | ✅ 完成 | 5/6 GREEN + 1 deferred | ~15 min | — |
 | Phase 1c: Evals/CI/Style/Test | ✅ 完成 | 41/~50 picked + 9 skip | ~30 min | ~82% |
+| Gate 1 完整单测基线 | 🟡 部分 | SDK 1241 PASS + CLI 3835 PASS, A16/A17 落档 | ~5 min | — |
 | Gate 1 单测基线 | ⏸️ 待启动 | — | est 0.5h | — |
 | Phase 2a: SDK low-conflict | ⏸️ 待启动 | 3 | est 1h | — |
 | Phase 2c: filesystem/permissions | ⏸️ 待启动 | 2 | est 1h | — |
