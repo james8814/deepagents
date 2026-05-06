@@ -81,12 +81,85 @@ Decision Path:
 
 ---
 
-## 5. Phase 1c 新增 skip PR（待 Phase 1c 完成后追加）
+## 5. Phase 1c 新增 skip PR（2026-05-06 本日同步落档）
 
-Phase 1c (51 PR Evals/CI/Style/Test) 完成时，如有新增 skip PR：
-- 加入本文档 §1 对应 Group（A/B）或新建 Group C（Phase 1c 独有）
+Phase 1c (实际 ~50 PR Evals/CI/Style/Test) 完成（41/~50 = ~82%）+ 9 个 skip PR 分组：
+
+### Group A（追加，Phase 2b 后处理）
+
+| PR | 主题 | Skip 根因 | 解锁时点 |
+|---|---|---|---|
+| #2978 | refactor(sdk,evals): migrate deprecations to `langchain_core` helpers | SDK 主线 — `protocol.py` + `filesystem.py` 冲突，与 fork `_convert_document_sync` 路径关联 | Phase 2c filesystem 簇后 |
+| #2992 | chore(sdk): inline file permission logic | 与 fork `_PermissionMiddleware` 关联（permissions.py 内联化重构） | Phase 2c 后 |
+| #3067 | chore(sdk): return `ToolMessage` with status from all filesystem tools | filesystem.py 主线，与 fork `_convert_document_sync` 关联 | Phase 2c 后 |
+| #3078 | docs(sdk): document removing the task tool | graph.py + harness 路径迁移（profiles 重构相关） | Phase 2b 后 |
+
+### Group B（追加，fork 架构分歧 — CLI UI）
+
+| PR | 主题 | Skip 根因 | Fork 端状态 |
+|---|---|---|---|
+| #3142 | style(cli): clarify onboarding name persistence | 依赖 fork 已删除的 `launch_init.py`（与 #3102 同根因） | Fork 已删除依赖 |
+| #3113 | style(cli): hint API-key setup above `/model` | `model_selector.py` + `test_model_selector.py` 冲突（与 #3111 关联） | Fork model_selector 分歧 |
+| #3125 | style(cli): hide "credentials set" indicator in `/model` header | `model_selector.py` 二次冲突 | 同 #3113 |
+
+### Group C（新增，release / version mgmt — 低优先级）
+
+| PR | 主题 | Skip 根因 | 处置 |
+|---|---|---|---|
+| #2528 | ci(runloop): set up release-please | `.release-please-manifest.json` + `release-please-config.json` 冲突（fork 自管理 release config） | 永久 skip — fork 不发版 |
+| #2729 | chore(cli): bump deepagents version | `libs/cli/pyproject.toml` 冲突（fork 维持 0.5.0） | 永久 skip — fork 不发版 |
+
+### Phase 1c 累计 skip 后置 SLA
+
+- Group A 4 PR：CTO 责任 — Phase 2c 完成后立即评估（5-7~5-8）
+- Group B 3 PR：项目负责人 + CTO 联合决策 — 桶 7 阶段或桶 2.6 NEW post-cutover（5-15~5-17）
+- Group C 2 PR：永久 skip（fork 不发版语境）
+
+---
+
+## 6. Phase 1c Take Theirs 副作用（A15 落档）
+
+### 6.1 #3026 覆盖 #3037 的 `TestModifiedBackspaceDeleteWordLeft` 测试 class
+
+**事实**：
+
+- Phase 1b 接受 #3037（`fix(cli): support modified backspace word deletion`）→ test_chat_input.py 增加两个 class：`TestChatTextAreaKeybindings` + `TestModifiedBackspaceDeleteWordLeft`
+- Phase 1c 接受 #3026（`test(cli): guard chat input against ctrl+m shadowing`）→ test_chat_input.py 二次冲突，take theirs 后**覆盖了 #3037 引入的 `TestModifiedBackspaceDeleteWordLeft` class**
+- ast.parse 实证：当前 class 数 37（vs Phase 1b 完成后 38）
+
+**功能影响**：
+
+- ✅ `TestChatTextAreaKeybindings` 仍存在（含 `test_modified_backspace_deletes_word_left` method）
+- ❌ `TestModifiedBackspaceDeleteWordLeft` class 丢失（独立详细测试）
+- ✅ #3037 source 改动（`d271f688`）仍在 — 功能未丢失，仅细粒度测试覆盖丢失
+
+**严重度**：🟡 中（功能完整 + 部分测试覆盖丢失）
+
+**修复路径**：
+
+| Option | 描述 | 成本 | 推荐 |
+|---|---|---|---|
+| a | revert Phase 1c #3026 + 重新 take theirs 时手动 merge fork & upstream 测试 | 高复杂度（影响 commit chain） | ❌ |
+| b | Gate 1 启动前补回 `TestModifiedBackspaceDeleteWordLeft` class（fork-side patch，不修改 cherry-pick 历史） | ~10 min | ✅ |
+| c | Document + Phase 6 E2E 兜底测试覆盖 | 长尾保障 | 🟡 备选 |
+
+**CTO 决策**：Option b（fork-side patch in Gate 1 阶段）+ Option c（备选保障）。
+
+### 6.2 立规 §2.4 Comparative-driven 触发记录
+
+A15 是立规 §2.4（自 2026-05-06 项目负责人裁决生效）的**首次触发实证**：
+
+- Forward-driven Phase 1c 41 cherry-picks 全部 GREEN
+- Comparative-driven 对比 Phase 1b vs 1c 同文件 take theirs 副作用 → 发现 class 数差异 → A15 暴露
+- 验证项目负责人立规价值：comparative gap 在 forward-driven 视角不可见
+
+---
+
+## 7. Phase 2 + 后续 Phase 新增 skip PR（占位）
+
+Phase 2a-2f 完成时，如有新增 skip PR：
+- 加入本文档 §1/§5 对应 Group
 - 走 §2 决策树
-- 落档到 §3 永久 skip 记录（如适用）
 
 ---
 
