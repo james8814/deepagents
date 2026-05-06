@@ -142,6 +142,72 @@ print('PR #3036 re-export OK')
 
 ---
 
+## 5A. Multi-source Measurement 强制（立规 §2.8 v2 + §2.9 适用）
+
+**触发**：项目负责人 EOD 5-6 §2 APPROVE Track B B4 关键发现 + 立规 §2.7 即时全量生效。
+**作用域**：Gate 1.5 audit 中任何 LOCKED baseline 类测量（PASS count / V2 invocation / 性能基准等）。
+
+### 5A.1 立规 §2.8 v2 — Multi-source Measurement 4 项强制
+
+**强制 1**：全 baseline 覆盖（NEW）
+
+- 11 项本地特性保护测试 + StateBackend RYW + `_PermissionMiddleware` re-export 测试中
+- 任一 LOCKED baseline 必须用 ≥2 measurement methods 验证
+- 不允许选择性应用（如只测 11 项保护而不测加强项）
+
+**强制 2**：Method consistency
+
+- 同次 audit 中所有 baselines 必须用同一 method
+- **Gate 1.5 推荐 Method**：pytest count + pytest-cov coverage % + ast.parse class/function count（三 source 三角实证）
+- 避免 mixed method（如部分用 pytest count 部分用 grep）
+
+**强制 3**：Sanity check ratios（基于 pmagent 11th round 2:1 实证）
+
+- 跨方法测量必须报告 method 间比例
+- 比例非 1:1 时必须 escalate 调查（baseline 是否含 noise）
+- 推荐 sanity ratio：pytest -v count vs ast.parse function/class count vs pytest -k filtered count
+
+**强制 4**：First-triangulation lock
+
+- Multi-source 三角实证完成 → baseline LOCKED
+- 后续 audit re-run 不允许 silent re-baseline
+- LOCKED baseline 修正诉求 → 项目负责人书面 escalate（按 §2.9）
+
+### 5A.2 立规 §2.9 — Anomaly vs Baseline 调查协议适用
+
+Gate 1.5 audit baseline LOCK 后：
+
+| 场景 | 处置 |
+|---|---|
+| A：测量值偏离 LOCKED baseline | 立即 stop + 报告（不允许"先调查再报警"） |
+| B：测量值偏离但怀疑 baseline 错 | LOCK 前可 fast-track investigation ≤10 min；**LOCK 后场景 B 不再适用** — 只允许 stop + 报告 |
+| LOCK 后 baseline 修正 | 必须项目负责人书面 escalate，不允许 silent re-baseline |
+
+### 5A.3 CTO Gate 1.5 audit 提交前 4 项自检
+
+按 §2.8 v2 + §2.9 强制：
+
+- [ ] 每个 baseline 来源 method 已 inline（如 "Skills V2 protection: pytest -v count = N1, ast.parse class count = N2, pytest-cov line% = N3, sanity ratio 1:1:_"）
+- [ ] 多 source 测量值已对照（method 间比例 inline + sanity check passed）
+- [ ] baseline LOCK 时点已记录（commit hash + datetime）
+- [ ] §2.4 v2 RED/AMBER 5 维度首次必含已遵守（任何 audit 中 RED/AMBER finding 含发现 + 修复 + 来源 + 可追溯 + 严重度）
+
+### 5A.4 Audit 报告输出格式增补（§4.1 模板补充）
+
+```markdown
+## 1. 11 项保护测试结果（含 multi-source baseline）
+
+| # | 特性 | pytest count | ast.parse | pytest-cov % | Sanity ratio | LOCKED at |
+|---|---|---|---|---|---|---|
+| 1 | SkillsMiddleware V2 | N1 | N2 | %1 | 1:1:_ ✅ | commit / datetime |
+| ... | ... | ... | ... | ... | ... | ... |
+
+**Multi-source consistency**：全部 11 项 sanity ratio 1:1:_ 内 → baseline LOCKED
+**§2.9 LOCK 后限制**：自此 audit 报告 commit 起，silent re-baseline 禁止
+```
+
+---
+
 ## 6. Audit 时序 SLA
 
 ```text
