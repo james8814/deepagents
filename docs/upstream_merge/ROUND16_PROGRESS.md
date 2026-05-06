@@ -15,7 +15,12 @@
 | Phase 1b: CLI feat/fix | ✅ 完成 | 17/23 picked + 6 skip | ~30 min | 73.9% |
 | Gate 1.0 smoke test | ✅ 完成 | 5/6 GREEN + 1 deferred | ~15 min | — |
 | Phase 1c: Evals/CI/Style/Test | ✅ 完成 | 41/~50 picked + 9 skip | ~30 min | ~82% |
-| Gate 1 完整单测基线 | 🟡 部分 | SDK 1241 PASS + CLI 3835 PASS, A16/A17 落档 | ~5 min | — |
+| Gate 1 完整单测基线 | 🟡 部分 | SDK 1241 PASS + CLI 3848 PASS (A17 fix 后), A16/A18 落档 | ~5 min | — |
+| Phase 2a (SDK low-conflict) | ✅ 完成 | 3/3 picked (#2991/#2980/#3031) | ~5 min | 100% |
+| Phase 2c (filesystem/permissions) | 🟡 skip | 0/2 (#3035/#3036 → DEFERRED Group A) | ~3 min | 0% |
+| Phase 2d (skills.py) | ✅ 完成 | 1/1 (#2976 empty commit auto-accept) | ~1 min | 100% |
+| Phase 2e (subagents.py) | ✅ 完成 | 1/1 (#3045) | ~1 min | 100% |
+| Phase 2f (sandbox) | ✅ 完成 | 1/1 (#2695) | ~1 min | 100% |
 | Gate 1 单测基线 | ⏸️ 待启动 | — | est 0.5h | — |
 | Phase 2a: SDK low-conflict | ⏸️ 待启动 | 3 | est 1h | — |
 | Phase 2c: filesystem/permissions | ⏸️ 待启动 | 2 | est 1h | — |

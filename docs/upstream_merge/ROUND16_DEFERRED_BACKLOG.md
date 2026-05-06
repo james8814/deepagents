@@ -93,6 +93,8 @@ Phase 1c (实际 ~50 PR Evals/CI/Style/Test) 完成（41/~50 = ~82%）+ 9 个 sk
 | #2992 | chore(sdk): inline file permission logic | 与 fork `_PermissionMiddleware` 关联（permissions.py 内联化重构） | Phase 2c 后 |
 | #3067 | chore(sdk): return `ToolMessage` with status from all filesystem tools | filesystem.py 主线，与 fork `_convert_document_sync` 关联 | Phase 2c 后 |
 | #3078 | docs(sdk): document removing the task tool | graph.py + harness 路径迁移（profiles 重构相关） | Phase 2b 后 |
+| **#3035** | **fix(sdk): harden FilesystemBackend against symlink loops** | **Phase 2c 期间 skip** — fork V2 父类 hot zone 复杂冲突（skills.py 7 + subagents.py 2 = 9 conflicts），fork V2 SkillsMiddleware (1362 行) 与 upstream symlink hardening 改动叠加，take theirs/ours 都破坏 V2 行为 | Phase 2b 完成 + 桶 6 5 层测试期间评估手动 merge |
+| **#3036** | **fix(sdk): re-export filesystem permission for backwards compatibility** | **Phase 2c 期间 skip** — `permissions.py` both added 冲突（fork 有 `_PermissionMiddleware` + upstream 新建同名 re-export 文件），fork 既有完整功能 | Phase 2b 后 + Gate 2 §2.2 re-export 验证一并处理 |
 
 ### Group B（追加，fork 架构分歧 — CLI UI）
 
