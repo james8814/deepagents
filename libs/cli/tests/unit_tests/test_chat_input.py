@@ -241,6 +241,27 @@ class TestChatTextAreaKeybindings:
         assert "ctrl+m" not in ChatTextArea._NEWLINE_KEYS
 
 
+class TestModifiedBackspaceDeleteWordLeft:
+    """Regression tests for modified backspace word deletion (A15 fork-side patch).
+
+    Restored in A15 fix after Phase 1c #3026 take theirs covered Phase 1b #3037
+    introduced class. This class restores fine-grained test coverage of upstream
+    PR #3037 'fix(cli): support modified backspace word deletion'.
+    """
+
+    def test_modified_backspace_deletes_word_left(self) -> None:
+        """Modified Backspace aliases should delete the previous word."""
+        word_delete_keys = {
+            key.strip()
+            for binding in ChatTextArea.BINDINGS
+            if binding.action == "delete_word_left"
+            for key in binding.key.split(",")
+        }
+
+        assert "ctrl+backspace" in word_delete_keys
+        assert "alt+backspace" in word_delete_keys
+
+
 class _ImagePasteApp(App[None]):
     """App that wires a shared tracker into ChatInput for paste tests."""
 
