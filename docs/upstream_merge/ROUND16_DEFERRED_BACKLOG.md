@@ -157,17 +157,34 @@ Phase 1c (实际 ~50 PR Evals/CI/Style/Test) 完成（41/~50 = ~82%）+ 9 个 sk
 4. **审计可追溯**：error trace `ImportError: cannot import name 'GeneralPurposeSubagentProfile' from 'deepagents.profiles'`。落档于本文件 + Phase 2b 后置 Group A 处理时一并 unskip。
 5. **严重度判定**：🔴 RED → Phase 2b 后自动恢复（无 fork patch 需要）。Gate 1.5 audit 时此 17 个 test 仍 skip，Gate 1.5 audit report 需 inline `--ignore` 决策（按 §5A multi-source method consistency）。
 
-### 6.4 A17 AMBER — CLI test_input_parsing.py 8 errors + 1 fail (Gate 1 baseline)
+### 6.4 A17 AMBER → ✅ CLOSED（项目负责人 §2 4 项评估完成）
 
-**触发**：同 A16，Gate 1 baseline 实测。
+**触发**：项目负责人 EOD A17 风险评估要求（≤10 min inline）。
 
-**5 维度**：
+**4 项评估答复**：
 
-1. **发现内容**：CLI `tests/unit_tests/test_input_parsing.py` 含 8 errors（`test_parse_file_mentions_*`）+ 1 fail（其他 module）。Total 3835 PASS / 1 FAIL / 8 errors / 3 SKIP（vs Round 14 baseline 3065 PASS + Phase 1b/1c 引入 ~770 新测试）。
-2. **修复方式**：Gate 1.5 阶段深入分析 8 errors 根因（fixture 问题 / env 依赖 / 二次 take theirs 副作用）+ 1 fail 定位。
-3. **来源轨道**：Track A Forward-driven（Gate 1 baseline 实跑发现）。
-4. **审计可追溯**：pytest output `8 errors in test_input_parsing.py: test_parse_file_mentions_warns_for_nonexistent_file / ignores_directories / adjacent_looks_like_email / handles_oserror / skips_email_addresses / skips_various_email_formats / works_after_cjk_text / handles_bad_tilde_user`。
-5. **严重度判定**：🟡 AMBER（8 errors / 3835 PASS = 0.2% fail rate；不影响 Phase 2 推进，但 Gate 1.5 audit 必须解决）。
+- Q1 同源根因：✅ 同源（8 errors 全部 `fixture 'mocker' not found`）
+- Q2 真实行为变化 vs 机械过期：✅ **测试基础设施问题**（pytest-mock + responses package 未装入 venv）
+- Q3 Phase 1c regression：❌ **NOT regression**（pyproject.toml 含 dependency，是 Layer 1 venv 重建 `uv sync --all-extras` 未含 test group dep）
+- Q4 涉及 PR：❌ 不涉及任何 PR — 是 venv 配置 issue
+
+**分流决议**：🟢 安全 → 立即修复（不 deferred Gate 1.5）
+
+**修复**：`uv pip install pytest-mock responses`
+**实测**：CLI baseline `3835 PASS + 8 errors + 1 fail` → `3848 PASS + 0 errors + 1 fail`
+
+**来源轨道**：Track A Forward-driven。
+**严重度**：🟡 AMBER → ✅ **CLOSED**
+
+### 6.4-bis A18 NEW AMBER — CLI test_chat_input.py 1 fail (独立 issue)
+
+**5 维度（立规 §2.4 v2）**：
+
+1. **发现内容**：`test_chat_input.py::TestSlashCompletionCursorMapping::test_click_completion_at_end_updates_hint_without_extra_frame` — 1 个独立 fail，与 A17 (`mocker` fixture) 不同源。
+2. **修复方式**：Gate 1.5 阶段深入分析 — 涉及 `TestSlashCompletionCursorMapping` 测试类（slash completion + cursor mapping），可能与 Phase 1b #3037 modified backspace + #3068 textual themes + Phase 1c #3026 ctrl+m shadowing 之一关联。
+3. **来源轨道**：Track A Forward-driven（A17 修复后 baseline 浮现）。
+4. **审计可追溯**：pytest output `FAILED tests/unit_tests/test_chat_input.py::TestSlashCompletionCursorMapping::test_click_completion_at_end_updates_hint_without_extra_frame`。
+5. **严重度判定**：🟡 AMBER（1 fail / 3848 PASS = 0.026% fail rate；不阻塞 Phase 2，Gate 1.5 audit 必须解决）。
 
 ### 6.5 立规 §2.4 Comparative-driven 触发记录
 
