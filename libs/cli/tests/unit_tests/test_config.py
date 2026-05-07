@@ -1717,7 +1717,7 @@ class TestOpenRouterHeaders:
         """Clear model config cache before each test."""
         clear_caches()
         # Mock the version check to avoid ImportError when installed version is old
-        self._version_patcher = patch("deepagents.profiles._openrouter.check_openrouter_version")
+        self._version_patcher = patch("deepagents.profiles.provider._openrouter.check_openrouter_version")
         self._version_patcher.start()
 
     def teardown_method(self) -> None:
