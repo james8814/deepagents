@@ -49,7 +49,7 @@ from deepagents.middleware.subagents import (
     SubAgentMiddleware,
 )
 from deepagents.middleware.summarization import create_summarization_middleware
-from deepagents.profiles import GeneralPurposeSubagentProfile
+from deepagents.profiles import GeneralPurposeSubagentProfile, HarnessProfile
 from deepagents.profiles.harness.harness_profiles import _apply_profile_prompt, _harness_profile_for_model
 
 logger = logging.getLogger(__name__)
@@ -182,7 +182,7 @@ def _build_subagent_middleware_stack(
     *,
     model: BaseChatModel,
     backend: BackendProtocol | BackendFactory,
-    profile: _HarnessProfile,
+    profile: HarnessProfile,
     skills: list[str] | None,
     skills_expose_dynamic_tools: bool,
     skills_allowlist: list[str] | None = None,
@@ -225,7 +225,7 @@ def _build_general_purpose_subagent(
     model: BaseChatModel,
     tools: list[BaseTool | Callable | dict[str, Any]] | None,
     backend: BackendProtocol | BackendFactory,
-    profile: _HarnessProfile,
+    profile: HarnessProfile,
     skills: list[str] | None,
     skills_expose_dynamic_tools: bool,
     permissions: list[FilesystemPermission] | None,
@@ -297,7 +297,7 @@ def _partition_subagents(
     default_model: BaseChatModel,
     default_tools: Sequence[BaseTool | Callable | dict[str, Any]] | None,
     backend: BackendProtocol | BackendFactory,
-    profile: _HarnessProfile,
+    profile: HarnessProfile,
     skills: list[str] | None,
     skills_expose_dynamic_tools: bool,
     permissions: list[FilesystemPermission] | None,
@@ -348,7 +348,7 @@ def _build_main_agent_middleware(
     *,
     model: BaseChatModel,
     backend: BackendProtocol | BackendFactory,
-    profile: _HarnessProfile,
+    profile: HarnessProfile,
     inline_subagents: list[SubAgent | CompiledSubAgent],
     async_subagents: list[AsyncSubAgent],
     middleware: Sequence[AgentMiddleware],
@@ -408,7 +408,7 @@ def _build_main_agent_middleware(
 
 def _build_final_system_prompt(
     system_prompt: str | SystemMessage | None,
-    profile: _HarnessProfile,
+    profile: HarnessProfile,
 ) -> str | SystemMessage:
     """Compose the caller prompt with the profile-specific base prompt."""
     base_prompt = profile.base_system_prompt if profile.base_system_prompt is not None else BASE_AGENT_PROMPT
