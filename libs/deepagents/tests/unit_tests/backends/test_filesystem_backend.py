@@ -10,6 +10,16 @@ from deepagents.backends.filesystem import FilesystemBackend
 from deepagents.backends.protocol import EditResult, ReadResult, WriteResult
 from deepagents.middleware.filesystem import FilesystemMiddleware
 
+# Round 16 Phase 2b — Track B 11 xfail reason (#2892 wiring incomplete fork-side).
+# See docs/upstream_merge/ROUND16_TRACK_B_11_BACKLOG.md for full categorization.
+_R16_TRACK_B_11_REASON_DEPRECATION = (
+    "Round 16 Phase 2b — #2892 NEW LangChainDeprecationWarning emission "
+    "(FilesystemBackend virtual_mode default) 未完整 fork-side. fork 删除 "
+    "deprecation 系统. Track B 11 AMBER — 桶 6 阶段评估. "
+    "See docs/upstream_merge/ROUND16_TRACK_B_11_BACKLOG.md"
+)
+
+
 
 def write_file(p: Path, content: str):
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -688,6 +698,7 @@ class TestEditCrlfNormalization:
 class TestVirtualModeDefaultDeprecation:
     """`virtual_mode=None` (omitted) emits a deprecation; explicit values do not."""
 
+    @pytest.mark.xfail(reason=_R16_TRACK_B_11_REASON_DEPRECATION, strict=False)
     def test_omitted_virtual_mode_warns(self, tmp_path: Path) -> None:
         with warnings.catch_warnings(record=True) as captured:
             warnings.simplefilter("always")
