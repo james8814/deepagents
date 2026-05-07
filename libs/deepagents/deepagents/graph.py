@@ -144,6 +144,27 @@ def get_default_model() -> ChatAnthropic:
     )
 
 
+def _resolve_extra_middleware(
+    profile: HarnessProfile,
+) -> list[AgentMiddleware[Any, Any, Any]]:
+    """Materialize the `extra_middleware` from a harness profile.
+
+    Backward-compat shim for pmagent imports (8 callsites at
+    `from deepagents.graph import _resolve_extra_middleware`).
+    Delegates to `HarnessProfile.materialize_extra_middleware()` introduced
+    by #2892.
+
+    A14 alias-equivalent at function level — Path 3 fork-side patch.
+
+    Args:
+        profile: The harness profile to read from.
+
+    Returns:
+        A fresh list of middleware instances (may be empty).
+    """
+    return profile.materialize_extra_middleware()
+
+
 _REQUIRED_MIDDLEWARE: tuple[tuple[type[AgentMiddleware[Any, Any, Any]], tuple[str, ...]], ...] = (
     (FilesystemMiddleware, ()),
     (SubAgentMiddleware, ()),
