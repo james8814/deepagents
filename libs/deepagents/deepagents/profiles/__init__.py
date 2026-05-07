@@ -28,11 +28,17 @@ from deepagents.profiles.provider.provider_profiles import (
 # Built-in provider/harness profiles are registered lazily on first
 # profile-registry access so importing `deepagents.profiles` stays cheap.
 
+# A14 alias: backward-compat name for pmagent imports (Phase 2b cutover safety net).
+# pmagent _private_api_imports.py:117: `from deepagents.profiles import _HarnessProfile`
+# 透明工作 — Path 3 fork-side patch (与 deepagents/__init__.py top-level alias 同模式).
+_HarnessProfile = HarnessProfile
+
 __all__ = [
     "GeneralPurposeSubagentProfile",
     "HarnessProfile",
     "HarnessProfileConfig",
     "ProviderProfile",
+    "_HarnessProfile",
     "register_harness_profile",
     "register_provider_profile",
 ]
