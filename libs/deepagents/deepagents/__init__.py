@@ -36,6 +36,7 @@ __all__ = [
     "SubAgent",
     "SubAgentMiddleware",
     "UploadResult",
+    "_HarnessProfile",
     "__version__",
     "create_deep_agent",
     "register_harness_profile",
